@@ -34,6 +34,26 @@ export default function BackgroundRemover() {
   const inputRef = useRef<HTMLInputElement>(null);
   const cutoutBlob = useRef<Blob | null>(null);
 
+  // warm the model in the background so the first removal feels instant
+  useEffect(() => {
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const schedule = w.requestIdleCallback || ((cb: () => void) => window.setTimeout(cb, 1500));
+    const id = schedule(async () => {
+      try {
+        const mod = (await import("@imgly/background-removal")) as {
+          preload?: () => Promise<void>;
+        };
+        await mod.preload?.();
+      } catch {
+        /* preload is best-effort */
+      }
+    });
+    return () => w.cancelIdleCallback?.(id as number);
+  }, []);
+
   // clean up object URLs
   useEffect(() => {
     return () => {

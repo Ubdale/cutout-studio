@@ -9,18 +9,18 @@ const tools = [
     live: true,
   },
   {
-    href: "#",
+    href: "/compress-image",
     title: "Compress image",
     desc: "Shrink JPG, PNG and WebP without visible quality loss.",
-    pill: "Soon",
-    live: false,
+    pill: "Live",
+    live: true,
   },
   {
-    href: "#",
+    href: "/convert-image",
     title: "Convert format",
     desc: "PNG ⇄ JPG ⇄ WebP, right in your browser.",
-    pill: "Soon",
-    live: false,
+    pill: "Live",
+    live: true,
   },
 ];
 
