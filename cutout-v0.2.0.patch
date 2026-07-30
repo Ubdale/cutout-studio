@@ -1,0 +1,575 @@
+From 49cd55c5a0ce0a1c6188d8b2f89fc871d1705af4 Mon Sep 17 00:00:00 2001
+From: Muhammad Ubdale <you@cutout.studio>
+Date: Mon, 27 Jul 2026 17:30:03 +0000
+Subject: [PATCH] v0.2.0: add compress-image + convert-image tools, preload bg
+ model for speed
+
+---
+ app/compress-image/page.tsx      |  36 +++++++
+ app/convert-image/page.tsx       |  36 +++++++
+ app/globals.css                  |  78 ++++++++++++++
+ app/page.tsx                     |  12 +--
+ components/BackgroundRemover.tsx |  20 ++++
+ components/ImageCompressor.tsx   | 174 +++++++++++++++++++++++++++++++
+ components/ImageConverter.tsx    | 136 ++++++++++++++++++++++++
+ 7 files changed, 486 insertions(+), 6 deletions(-)
+ create mode 100644 app/compress-image/page.tsx
+ create mode 100644 app/convert-image/page.tsx
+ create mode 100644 components/ImageCompressor.tsx
+ create mode 100644 components/ImageConverter.tsx
+
+diff --git a/app/compress-image/page.tsx b/app/compress-image/page.tsx
+new file mode 100644
+index 0000000..c3955e3
+--- /dev/null
++++ b/app/compress-image/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import ImageCompressor from "@/components/ImageCompressor";
++
++export const metadata: Metadata = {
++  title: "Compress image — free & private",
++  description:
++    "Compress JPG, PNG and WebP images for free. Runs entirely in your browser, nothing is uploaded. Adjust quality and size, then download.",
++  alternates: { canonical: "/compress-image" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Image compressor</p>
++        <h1 className="display">Compress images for free.<br />Nothing leaves your device.</h1>
++        <p className="lead">Shrink JPG, PNG and WebP with a live quality preview, then download. No sign-up, no upload.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <ImageCompressor />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/convert-image/page.tsx b/app/convert-image/page.tsx
+new file mode 100644
+index 0000000..3725f60
+--- /dev/null
++++ b/app/convert-image/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import ImageConverter from "@/components/ImageConverter";
++
++export const metadata: Metadata = {
++  title: "Convert image — PNG, JPG, WebP",
++  description:
++    "Convert images between PNG, JPG and WebP for free. Runs entirely in your browser, nothing is uploaded. Fast, private, unlimited.",
++  alternates: { canonical: "/convert-image" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Image converter</p>
++        <h1 className="display">Convert PNG, JPG & WebP.<br />Right in your browser.</h1>
++        <p className="lead">Switch image formats instantly with no upload. Pick a format and download.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <ImageConverter />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/globals.css b/app/globals.css
+index 2a2ebaf..32fc321 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -516,3 +516,81 @@ button {
+     grid-template-columns: 1fr;
+   }
+ }
++
++/* ---------- compressor + converter ---------- */
++.controls {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 16px;
++  padding: 6px;
++  margin-bottom: 12px;
++}
++.ctrl {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++  font-size: 13px;
++  font-weight: 600;
++}
++.ctrl input[type="range"] {
++  width: 100%;
++  accent-color: var(--accent);
++}
++.preview {
++  border-radius: 12px;
++  overflow: hidden;
++  display: flex;
++  justify-content: center;
++  align-items: center;
++  max-height: 440px;
++  margin-bottom: 12px;
++}
++.preview img {
++  max-width: 100%;
++  max-height: 440px;
++  object-fit: contain;
++  display: block;
++}
++.fmt-row {
++  display: flex;
++  gap: 8px;
++  padding: 6px;
++  margin-bottom: 12px;
++}
++.fmt-btn {
++  flex: 1;
++  border: 1px solid var(--line);
++  background: var(--surface);
++  border-radius: 10px;
++  padding: 12px;
++  font-weight: 600;
++  font-size: 14px;
++  color: var(--ink);
++  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
++}
++.fmt-btn:hover {
++  border-color: var(--muted);
++}
++.fmt-btn.on {
++  background: var(--accent);
++  border-color: var(--accent);
++  color: #fff;
++}
++.btn.primary {
++  background: var(--accent);
++  color: #fff;
++  border-color: var(--accent);
++}
++.btn.primary:hover {
++  background: var(--accent-ink);
++  border-color: var(--accent-ink);
++}
++.btn:disabled {
++  opacity: 0.55;
++  cursor: default;
++}
++@media (max-width: 640px) {
++  .controls {
++    grid-template-columns: 1fr;
++  }
++}
+diff --git a/app/page.tsx b/app/page.tsx
+index a6bfab9..82f1f39 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -9,18 +9,18 @@ const tools = [
+     live: true,
+   },
+   {
+-    href: "#",
++    href: "/compress-image",
+     title: "Compress image",
+     desc: "Shrink JPG, PNG and WebP without visible quality loss.",
+-    pill: "Soon",
+-    live: false,
++    pill: "Live",
++    live: true,
+   },
+   {
+-    href: "#",
++    href: "/convert-image",
+     title: "Convert format",
+     desc: "PNG ⇄ JPG ⇄ WebP, right in your browser.",
+-    pill: "Soon",
+-    live: false,
++    pill: "Live",
++    live: true,
+   },
+ ];
+ 
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index 21b61be..6c6a76b 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -34,6 +34,26 @@ export default function BackgroundRemover() {
+   const inputRef = useRef<HTMLInputElement>(null);
+   const cutoutBlob = useRef<Blob | null>(null);
+ 
++  // warm the model in the background so the first removal feels instant
++  useEffect(() => {
++    const w = window as unknown as {
++      requestIdleCallback?: (cb: () => void) => number;
++      cancelIdleCallback?: (id: number) => void;
++    };
++    const schedule = w.requestIdleCallback || ((cb: () => void) => window.setTimeout(cb, 1500));
++    const id = schedule(async () => {
++      try {
++        const mod = (await import("@imgly/background-removal")) as {
++          preload?: () => Promise<void>;
++        };
++        await mod.preload?.();
++      } catch {
++        /* preload is best-effort */
++      }
++    });
++    return () => w.cancelIdleCallback?.(id as number);
++  }, []);
++
+   // clean up object URLs
+   useEffect(() => {
+     return () => {
+diff --git a/components/ImageCompressor.tsx b/components/ImageCompressor.tsx
+new file mode 100644
+index 0000000..7abebdf
+--- /dev/null
++++ b/components/ImageCompressor.tsx
+@@ -0,0 +1,174 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++function prettyBytes(n: number) {
++  if (n < 1024) return `${n} B`;
++  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
++  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
++}
++
++type Result = { url: string; blob: Blob; w: number; h: number };
++
++export default function ImageCompressor() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [img, setImg] = useState<HTMLImageElement | null>(null);
++  const [name, setName] = useState("");
++  const [origSize, setOrigSize] = useState(0);
++  const [quality, setQuality] = useState(0.7);
++  const [maxW, setMaxW] = useState(0); // 0 = keep original width
++  const [out, setOut] = useState<Result | null>(null);
++  const [busy, setBusy] = useState(false);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => {
++    return () => {
++      if (srcUrl) URL.revokeObjectURL(srcUrl);
++      if (out) URL.revokeObjectURL(out.url);
++    };
++  }, [srcUrl, out]);
++
++  const compress = useCallback(
++    (image: HTMLImageElement, q: number, mw: number) => {
++      setBusy(true);
++      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
++      const w = Math.round(image.naturalWidth * scale);
++      const h = Math.round(image.naturalHeight * scale);
++      const canvas = document.createElement("canvas");
++      canvas.width = w;
++      canvas.height = h;
++      const ctx = canvas.getContext("2d")!;
++      ctx.drawImage(image, 0, 0, w, h);
++      canvas.toBlob(
++        (blob) => {
++          if (blob) {
++            setOut((prev) => {
++              if (prev) URL.revokeObjectURL(prev.url);
++              return { url: URL.createObjectURL(blob), blob, w, h };
++            });
++          }
++          setBusy(false);
++        },
++        "image/jpeg",
++        q
++      );
++    },
++    []
++  );
++
++  const handleFile = useCallback(
++    (file: File) => {
++      if (!file.type.startsWith("image/")) return;
++      const url = URL.createObjectURL(file);
++      setSrcUrl(url);
++      setName(file.name);
++      setOrigSize(file.size);
++      const image = new Image();
++      image.onload = () => {
++        setImg(image);
++        compress(image, quality, maxW);
++      };
++      image.src = url;
++    },
++    [compress, quality, maxW]
++  );
++
++  // re-compress when settings change
++  useEffect(() => {
++    if (img) compress(img, quality, maxW);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [quality, maxW]);
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    setSrcUrl(null);
++    setImg(null);
++    setOut(null);
++    setName("");
++    setOrigSize(0);
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  const download = () => {
++    if (!out) return;
++    const a = document.createElement("a");
++    a.href = out.url;
++    a.download = name.replace(/\.[^.]+$/, "") + "-compressed.jpg";
++    a.click();
++  };
++
++  const saved = out && origSize ? Math.max(0, Math.round((1 - out.blob.size / origSize) * 100)) : 0;
++
++  return (
++    <div className="tool">
++      {!img ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => {
++            e.preventDefault();
++            setOver(true);
++          }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => {
++            e.preventDefault();
++            setOver(false);
++            const f = e.dataTransfer.files?.[0];
++            if (f) handleFile(f);
++          }}
++          onClick={() => inputRef.current?.click()}
++          role="button"
++          tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to compress</h2>
++          <p>JPG, PNG or WebP · shrinks in your browser, nothing uploaded</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span>
++            <span className="dot" />
++            <span>{prettyBytes(origSize)}</span>
++            {out && (
++              <>
++                <span className="dot" />
++                <span>→ {prettyBytes(out.blob.size)}</span>
++                <span className="dot" />
++                <span style={{ color: saved > 0 ? "var(--accent)" : "inherit" }}>{saved}% smaller</span>
++              </>
++            )}
++          </div>
++
++          <div className="controls">
++            <label className="ctrl">
++              <span>Quality: {Math.round(quality * 100)}%</span>
++              <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
++            </label>
++            <label className="ctrl">
++              <span>Max width: {maxW ? `${maxW}px` : "original"}</span>
++              <input type="range" min={0} max={4000} step={100} value={maxW} onChange={(e) => setMaxW(Number(e.target.value))} />
++            </label>
++          </div>
++
++          {out && (
++            <div className="preview checker">
++              <img src={out.url} alt="Compressed preview" />
++            </div>
++          )}
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
++              {busy ? "Working…" : "Download JPG"}
++            </button>
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/ImageConverter.tsx b/components/ImageConverter.tsx
+new file mode 100644
+index 0000000..7e507d5
+--- /dev/null
++++ b/components/ImageConverter.tsx
+@@ -0,0 +1,136 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++type Fmt = "image/png" | "image/jpeg" | "image/webp";
++const LABEL: Record<Fmt, string> = { "image/png": "PNG", "image/jpeg": "JPG", "image/webp": "WebP" };
++const EXT: Record<Fmt, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
++
++export default function ImageConverter() {
++  const [over, setOver] = useState(false);
++  const [img, setImg] = useState<HTMLImageElement | null>(null);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [fmt, setFmt] = useState<Fmt>("image/webp");
++  const [out, setOut] = useState<{ url: string; blob: Blob } | null>(null);
++  const [busy, setBusy] = useState(false);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => {
++    return () => {
++      if (srcUrl) URL.revokeObjectURL(srcUrl);
++      if (out) URL.revokeObjectURL(out.url);
++    };
++  }, [srcUrl, out]);
++
++  const convert = useCallback((image: HTMLImageElement, f: Fmt) => {
++    setBusy(true);
++    const canvas = document.createElement("canvas");
++    canvas.width = image.naturalWidth;
++    canvas.height = image.naturalHeight;
++    const ctx = canvas.getContext("2d")!;
++    if (f === "image/jpeg") {
++      ctx.fillStyle = "#ffffff"; // JPG has no transparency
++      ctx.fillRect(0, 0, canvas.width, canvas.height);
++    }
++    ctx.drawImage(image, 0, 0);
++    canvas.toBlob(
++      (blob) => {
++        if (blob) setOut((prev) => {
++          if (prev) URL.revokeObjectURL(prev.url);
++          return { url: URL.createObjectURL(blob), blob };
++        });
++        setBusy(false);
++      },
++      f,
++      0.92
++    );
++  }, []);
++
++  const handleFile = useCallback((file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    const url = URL.createObjectURL(file);
++    setSrcUrl(url);
++    setName(file.name);
++    const image = new Image();
++    image.onload = () => {
++      setImg(image);
++      convert(image, fmt);
++    };
++    image.src = url;
++  }, [convert, fmt]);
++
++  useEffect(() => {
++    if (img) convert(img, fmt);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [fmt]);
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    setImg(null);
++    setSrcUrl(null);
++    setOut(null);
++    setName("");
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  const download = () => {
++    if (!out) return;
++    const a = document.createElement("a");
++    a.href = out.url;
++    a.download = name.replace(/\.[^.]+$/, "") + "." + EXT[fmt];
++    a.click();
++  };
++
++  return (
++    <div className="tool">
++      {!img ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button"
++          tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to convert</h2>
++          <p>PNG ⇄ JPG ⇄ WebP · converts in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span>
++            {out && (<><span className="dot" /><span>→ {LABEL[fmt]}</span></>)}
++          </div>
++
++          <div className="fmt-row">
++            {(Object.keys(LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
++                {LABEL[f]}
++              </button>
++            ))}
++          </div>
++
++          {out && (
++            <div className="preview checker">
++              <img src={out.url} alt="Converted preview" />
++            </div>
++          )}
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
++              {busy ? "Working…" : `Download ${LABEL[fmt]}`}
++            </button>
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+-- 
+2.43.0
+

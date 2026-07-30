@@ -1,0 +1,119 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  decode, sourceSize, release, canvasToBlob, triggerDownload, baseName,
+} from "@/lib/image";
+
+export default function CircleCrop() {
+  const [over, setOver] = useState(false);
+  const [srcUrl, setSrcUrl] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [nat, setNat] = useState({ w: 0, h: 0 });
+  const [ring, setRing] = useState(0);
+  const [out, setOut] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => () => {
+    if (srcUrl) URL.revokeObjectURL(srcUrl);
+    if (out) URL.revokeObjectURL(out);
+    release(bmp.current);
+  }, [srcUrl, out]);
+
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    release(bmp.current);
+    const decoded = await decode(file);
+    bmp.current = decoded;
+    setNat(sourceSize(decoded));
+    setName(file.name);
+    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+    setOut(null);
+  }, []);
+
+  const run = useCallback(async () => {
+    if (!bmp.current) return;
+    setBusy(true);
+    const size = Math.min(nat.w, nat.h);
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
+    ctx.restore();
+    if (ring > 0) {
+      ctx.lineWidth = ring;
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
+    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+    setBusy(false);
+  }, [nat, ring]);
+
+  const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
+
+  const reset = () => {
+    if (srcUrl) URL.revokeObjectURL(srcUrl);
+    if (out) URL.revokeObjectURL(out);
+    release(bmp.current); bmp.current = null;
+    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  return (
+    <div className="tool">
+      {!srcUrl ? (
+        <div
+          className={`drop${over ? " over" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
+          onClick={() => inputRef.current?.click()}
+          role="button" tabIndex={0}
+          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
+        >
+          <div className="drop-mark checker" />
+          <h2 className="display">Drop a photo for a circle crop</h2>
+          <p>Round profile picture on a transparent PNG · in your browser</p>
+          <button className="pick" type="button">Choose image</button>
+          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+        </div>
+      ) : (
+        <div className="stage">
+          <div className="meta mono">
+            <span>{name}</span><span className="dot" /><span>{nat.w}×{nat.h}</span>
+            {out && (<><span className="dot" /><span>→ {Math.min(nat.w, nat.h)}×{Math.min(nat.w, nat.h)} PNG</span></>)}
+          </div>
+
+          <div className="controls">
+            <label className="ctrl">White ring — {ring}px
+              <input type="range" min={0} max={48} value={ring} onChange={(e) => { setRing(+e.target.value); setOut(null); }} />
+            </label>
+          </div>
+
+          <div className="preview checker">
+            <img src={out ?? srcUrl} alt="Preview" style={out ? undefined : { borderRadius: "50%", aspectRatio: "1 / 1", objectFit: "cover", width: "min(320px, 80%)" }} />
+          </div>
+
+          <div className="actions">
+            {!out ? (
+              <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Make circle PNG"}</button>
+            ) : (
+              <button className="btn primary" type="button" onClick={download}>Download PNG</button>
+            )}
+            <button className="btn" type="button" onClick={reset}>New image</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

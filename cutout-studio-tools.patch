@@ -1,0 +1,1155 @@
+diff --git a/app/circle-crop/page.tsx b/app/circle-crop/page.tsx
+new file mode 100644
+index 0000000..8540c4a
+--- /dev/null
++++ b/app/circle-crop/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import CircleCrop from "@/components/CircleCrop";
++
++export const metadata: Metadata = {
++  title: "Circle crop — round profile picture",
++  description:
++    "Crop a photo into a circle and export a transparent PNG for free. Runs in your browser, nothing is uploaded.",
++  alternates: { canonical: "/circle-crop" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Circle crop</p>
++        <h1 className="display">Make a round<br />profile picture.</h1>
++        <p className="lead">Crop any photo to a clean circle on a transparent PNG, with an optional white ring. Ready for any avatar.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <CircleCrop />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/crop-image/page.tsx b/app/crop-image/page.tsx
+new file mode 100644
+index 0000000..0ec63ac
+--- /dev/null
++++ b/app/crop-image/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import CropImage from "@/components/CropImage";
++
++export const metadata: Metadata = {
++  title: "Crop image — drag to any size or ratio",
++  description:
++    "Crop images to any size or aspect ratio for free. Drag the box right in your browser — nothing is uploaded.",
++  alternates: { canonical: "/crop-image" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Image cropper</p>
++        <h1 className="display">Crop an image.<br />Right in your browser.</h1>
++        <p className="lead">Drag the crop box or snap to 1:1, 4:3 and 16:9. Works on touch too.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <CropImage />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/globals.css b/app/globals.css
+index 32fc321..a551277 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -594,3 +594,72 @@ button {
+     grid-template-columns: 1fr;
+   }
+ }
++
++/* ---------- resize / metadata extras ---------- */
++.num-input {
++  width: 100%;
++  padding: 12px 12px;
++  font-size: 15px;
++  border: 1px solid var(--line);
++  border-radius: 10px;
++  background: var(--surface);
++  color: var(--ink);
++}
++.num-input:focus {
++  outline: none;
++  border-color: var(--accent);
++}
++.hint {
++  margin: 0 6px 12px;
++  font-size: 13px;
++  color: var(--muted);
++  line-height: 1.5;
++}
++
++/* ---------- crop ---------- */
++.crop-stage {
++  position: relative;
++  border-radius: 12px;
++  overflow: hidden;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  height: min(60vh, 440px);
++  margin-bottom: 12px;
++  touch-action: none; /* let pointer drags own the gesture on mobile */
++}
++.crop-img {
++  max-width: 100%;
++  max-height: 100%;
++  object-fit: contain;
++  -webkit-user-drag: none;
++  user-select: none;
++  pointer-events: none;
++}
++.crop-box {
++  position: absolute;
++  border: 1.5px solid #fff;
++  box-shadow: 0 0 0 9999px rgba(20, 24, 33, 0.45);
++  cursor: move;
++  touch-action: none;
++}
++.crop-handle {
++  position: absolute;
++  width: 26px;
++  height: 26px;
++  margin: -13px; /* big touch target, small visual */
++  border-radius: 50%;
++  touch-action: none;
++}
++.crop-handle::after {
++  content: "";
++  position: absolute;
++  inset: 8px;
++  background: #fff;
++  border: 1.5px solid var(--accent);
++  border-radius: 50%;
++}
++.crop-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
++.crop-handle.ne { right: 0; top: 0; cursor: nesw-resize; }
++.crop-handle.sw { left: 0; bottom: 0; cursor: nesw-resize; }
++.crop-handle.se { right: 0; bottom: 0; cursor: nwse-resize; }
+diff --git a/app/page.tsx b/app/page.tsx
+index 82f1f39..e50d7cd 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -22,6 +22,41 @@ const tools = [
+     pill: "Live",
+     live: true,
+   },
++  {
++    href: "/resize-image",
++    title: "Resize image",
++    desc: "Set exact width and height, or scale by percent.",
++    pill: "Live",
++    live: true,
++  },
++  {
++    href: "/crop-image",
++    title: "Crop image",
++    desc: "Drag to any size or snap to a common ratio.",
++    pill: "Live",
++    live: true,
++  },
++  {
++    href: "/rotate-image",
++    title: "Rotate & flip",
++    desc: "Turn 90° at a time or mirror the image.",
++    pill: "Live",
++    live: true,
++  },
++  {
++    href: "/remove-metadata",
++    title: "Remove metadata",
++    desc: "Strip EXIF, GPS and camera data before you share.",
++    pill: "Live",
++    live: true,
++  },
++  {
++    href: "/circle-crop",
++    title: "Circle crop",
++    desc: "Round profile picture on a transparent PNG.",
++    pill: "Live",
++    live: true,
++  },
+ ];
+ 
+ export default function Home() {
+diff --git a/app/remove-metadata/page.tsx b/app/remove-metadata/page.tsx
+new file mode 100644
+index 0000000..e0f56f6
+--- /dev/null
++++ b/app/remove-metadata/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import MetadataRemover from "@/components/MetadataRemover";
++
++export const metadata: Metadata = {
++  title: "Remove image metadata (EXIF, GPS)",
++  description:
++    "Strip EXIF, GPS and camera data from photos for free. The image never leaves your device — metadata is removed in your browser.",
++  alternates: { canonical: "/remove-metadata" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Metadata remover</p>
++        <h1 className="display">Remove hidden data<br />from your photos.</h1>
++        <p className="lead">Photos carry location, camera and timestamp data. Strip it all before you share — privately, on your device.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <MetadataRemover />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/resize-image/page.tsx b/app/resize-image/page.tsx
+new file mode 100644
+index 0000000..ecf57af
+--- /dev/null
++++ b/app/resize-image/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import ResizeImage from "@/components/ResizeImage";
++
++export const metadata: Metadata = {
++  title: "Resize image — set width & height",
++  description:
++    "Resize any image to exact pixels or scale by percent, free. Runs entirely in your browser, nothing is uploaded.",
++  alternates: { canonical: "/resize-image" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Image resizer</p>
++        <h1 className="display">Resize an image.<br />Right in your browser.</h1>
++        <p className="lead">Set exact width and height, keep the aspect ratio, and download. No upload, no limits.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <ResizeImage />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/rotate-image/page.tsx b/app/rotate-image/page.tsx
+new file mode 100644
+index 0000000..185992c
+--- /dev/null
++++ b/app/rotate-image/page.tsx
+@@ -0,0 +1,36 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import RotateImage from "@/components/RotateImage";
++
++export const metadata: Metadata = {
++  title: "Rotate & flip image",
++  description:
++    "Rotate or flip images 90 degrees at a time for free. Runs entirely in your browser, nothing is uploaded.",
++  alternates: { canonical: "/rotate-image" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Rotate & flip</p>
++        <h1 className="display">Rotate or flip an image.<br />Right in your browser.</h1>
++        <p className="lead">Turn the image left or right and mirror it horizontally or vertically, then download.</p>
++      </section>
++      <section className="wrap tool-slot">
++        <RotateImage />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+new file mode 100644
+index 0000000..7968f13
+--- /dev/null
++++ b/components/CircleCrop.tsx
+@@ -0,0 +1,119 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload, baseName,
++} from "@/lib/image";
++
++export default function CircleCrop() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [ring, setRing] = useState(0);
++  const [out, setOut] = useState<string | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out);
++    release(bmp.current);
++  }, [srcUrl, out]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    setNat(sourceSize(decoded));
++    setName(file.name);
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++    setOut(null);
++  }, []);
++
++  const run = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    const size = Math.min(nat.w, nat.h);
++    const canvas = document.createElement("canvas");
++    canvas.width = size; canvas.height = size;
++    const ctx = canvas.getContext("2d")!;
++    ctx.save();
++    ctx.beginPath();
++    ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
++    ctx.clip();
++    ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
++    ctx.restore();
++    if (ring > 0) {
++      ctx.lineWidth = ring;
++      ctx.strokeStyle = "#ffffff";
++      ctx.beginPath();
++      ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
++      ctx.stroke();
++    }
++    const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
++    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
++    setBusy(false);
++  }, [nat, ring]);
++
++  const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0);
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  return (
++    <div className="tool">
++      {!srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop a photo for a circle crop</h2>
++          <p>Round profile picture on a transparent PNG · in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" /><span>{nat.w}×{nat.h}</span>
++            {out && (<><span className="dot" /><span>→ {Math.min(nat.w, nat.h)}×{Math.min(nat.w, nat.h)} PNG</span></>)}
++          </div>
++
++          <div className="controls">
++            <label className="ctrl">White ring — {ring}px
++              <input type="range" min={0} max={48} value={ring} onChange={(e) => { setRing(+e.target.value); setOut(null); }} />
++            </label>
++          </div>
++
++          <div className="preview checker">
++            <img src={out ?? srcUrl} alt="Preview" style={out ? undefined : { borderRadius: "50%", aspectRatio: "1 / 1", objectFit: "cover", width: "min(320px, 80%)" }} />
++          </div>
++
++          <div className="actions">
++            {!out ? (
++              <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Make circle PNG"}</button>
++            ) : (
++              <button className="btn primary" type="button" onClick={download}>Download PNG</button>
++            )}
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/CropImage.tsx b/components/CropImage.tsx
+new file mode 100644
+index 0000000..eb9e0ea
+--- /dev/null
++++ b/components/CropImage.tsx
+@@ -0,0 +1,196 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload,
++  baseName, outputFmt, FMT_EXT,
++} from "@/lib/image";
++
++type Box = { x: number; y: number; w: number; h: number };
++type Aspect = { label: string; value: number | null };
++
++const ASPECTS: Aspect[] = [
++  { label: "Free", value: null },
++  { label: "1:1", value: 1 },
++  { label: "4:3", value: 4 / 3 },
++  { label: "16:9", value: 16 / 9 },
++  { label: "3:4", value: 3 / 4 },
++];
++
++export default function CropImage() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [aspect, setAspect] = useState<number | null>(null);
++  const [busy, setBusy] = useState(false);
++  const [, tick] = useState(0);
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++  const stageRef = useRef<HTMLDivElement>(null);
++  const box = useRef<Box>({ x: 0, y: 0, w: 0, h: 0 });
++  const drag = useRef<{ mode: string; sx: number; sy: number; start: Box; scale: number } | null>(null);
++  const rerender = () => tick((n) => n + 1);
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    release(bmp.current);
++  }, [srcUrl]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    const s = sourceSize(decoded);
++    setNat(s);
++    // start with an 80% centered box
++    const w = s.w * 0.8, h = s.h * 0.8;
++    box.current = { x: (s.w - w) / 2, y: (s.h - h) / 2, w, h };
++    setAspect(null);
++    setName(file.name);
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++  }, []);
++
++  const metrics = () => {
++    const el = stageRef.current;
++    if (!el || !nat.w) return { scale: 1, ox: 0, oy: 0 };
++    const rect = el.getBoundingClientRect();
++    const scale = Math.min(rect.width / nat.w, rect.height / nat.h);
++    return { scale, ox: (rect.width - nat.w * scale) / 2, oy: (rect.height - nat.h * scale) / 2 };
++  };
++
++  const applyAspect = (a: number | null) => {
++    setAspect(a);
++    if (!a) return;
++    const b = box.current;
++    let w = b.w, h = w / a;
++    if (h > nat.h) { h = nat.h; w = h * a; }
++    if (w > nat.w) { w = nat.w; h = w / a; }
++    b.w = w; b.h = h;
++    b.x = Math.min(Math.max(0, b.x), nat.w - w);
++    b.y = Math.min(Math.max(0, b.y), nat.h - h);
++    rerender();
++  };
++
++  const onDown = (mode: string) => (e: React.PointerEvent) => {
++    e.preventDefault();
++    e.stopPropagation();
++    (e.target as Element).setPointerCapture?.(e.pointerId);
++    drag.current = { mode, sx: e.clientX, sy: e.clientY, start: { ...box.current }, scale: metrics().scale };
++  };
++  const onMove = (e: React.PointerEvent) => {
++    const d = drag.current;
++    if (!d) return;
++    const dx = (e.clientX - d.sx) / d.scale;
++    const dy = (e.clientY - d.sy) / d.scale;
++    const b = { ...d.start };
++    if (d.mode === "move") {
++      b.x = Math.min(Math.max(0, d.start.x + dx), nat.w - b.w);
++      b.y = Math.min(Math.max(0, d.start.y + dy), nat.h - b.h);
++    } else {
++      let { x, y, w, h } = d.start;
++      if (d.mode.includes("e")) w = d.start.w + dx;
++      if (d.mode.includes("s")) h = d.start.h + dy;
++      if (d.mode.includes("w")) { w = d.start.w - dx; x = d.start.x + dx; }
++      if (d.mode.includes("n")) { h = d.start.h - dy; y = d.start.y + dy; }
++      if (aspect) {
++        if (d.mode.includes("e") || d.mode.includes("w")) h = w / aspect;
++        else w = h * aspect;
++      }
++      w = Math.max(24, w); h = Math.max(24, h);
++      x = Math.min(Math.max(0, x), nat.w - 24);
++      y = Math.min(Math.max(0, y), nat.h - 24);
++      w = Math.min(w, nat.w - x);
++      h = Math.min(h, nat.h - y);
++      b.x = x; b.y = y; b.w = w; b.h = h;
++    }
++    box.current = b;
++    rerender();
++  };
++  const onUp = () => { drag.current = null; };
++
++  const download = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    const b = box.current;
++    const canvas = document.createElement("canvas");
++    canvas.width = Math.round(b.w);
++    canvas.height = Math.round(b.h);
++    const ctx = canvas.getContext("2d")!;
++    ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
++    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
++    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
++    if (blob) {
++      const url = URL.createObjectURL(blob);
++      triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
++      setTimeout(() => URL.revokeObjectURL(url), 4000);
++    }
++    setBusy(false);
++  }, [name]);
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 });
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  const { scale, ox, oy } = metrics();
++  const b = box.current;
++
++  return (
++    <div className="tool">
++      {!srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to crop</h2>
++          <p>Drag the box, snap to a ratio · crops in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" />
++            <span>crop {Math.round(b.w)}×{Math.round(b.h)}</span>
++          </div>
++
++          <div className="fmt-row">
++            {ASPECTS.map((a) => (
++              <button key={a.label} type="button" className={`fmt-btn${aspect === a.value ? " on" : ""}`} onClick={() => applyAspect(a.value)}>{a.label}</button>
++            ))}
++          </div>
++
++          <div ref={stageRef} className="crop-stage checker" onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
++            {/* eslint-disable-next-line @next/next/no-img-element */}
++            <img src={srcUrl} alt="Crop source" className="crop-img" draggable={false} />
++            <div
++              className="crop-box"
++              style={{ left: ox + b.x * scale, top: oy + b.y * scale, width: b.w * scale, height: b.h * scale }}
++              onPointerDown={onDown("move")}
++            >
++              {["nw", "ne", "sw", "se"].map((h) => (
++                <span key={h} className={`crop-handle ${h}`} onPointerDown={onDown(h)} />
++              ))}
++            </div>
++          </div>
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={download} disabled={busy}>{busy ? "Working…" : "Crop & download"}</button>
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+new file mode 100644
+index 0000000..df1735f
+--- /dev/null
++++ b/components/MetadataRemover.tsx
+@@ -0,0 +1,116 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload,
++  baseName, prettyBytes, type Fmt, FMT_LABEL, FMT_EXT, outputFmt,
++} from "@/lib/image";
++
++export default function MetadataRemover() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [srcSize, setSrcSize] = useState(0);
++  const [fmt, setFmt] = useState<Fmt>("image/jpeg");
++  const [out, setOut] = useState<{ url: string; size: number } | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current);
++  }, [srcUrl, out]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    setNat(sourceSize(decoded));
++    setSrcSize(file.size);
++    setName(file.name);
++    setFmt(outputFmt(file.type));
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++    setOut(null);
++  }, []);
++
++  const run = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    const canvas = document.createElement("canvas");
++    canvas.width = nat.w; canvas.height = nat.h;
++    const ctx = canvas.getContext("2d")!;
++    if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
++    ctx.drawImage(bmp.current, 0, 0);
++    const blob = await canvasToBlob(canvas, fmt, 0.92);
++    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
++    setBusy(false);
++  }, [nat, fmt]);
++
++  const download = () => {
++    if (!out) return;
++    triggerDownload(out.url, `${baseName(name)}-clean.${FMT_EXT[fmt]}`);
++  };
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0);
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  return (
++    <div className="tool">
++      {!srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to clean</h2>
++          <p>Strips EXIF, GPS and camera data · nothing leaves your device</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" /><span>{prettyBytes(srcSize)}</span>
++            {out && (<><span className="dot" /><span>→ {prettyBytes(out.size)}, metadata removed</span></>)}
++          </div>
++
++          <p className="hint">Re-encoding keeps only the pixels, so every hidden field — location, camera model, timestamps — is dropped. Choose an output format:</p>
++
++          <div className="fmt-row">
++            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => { setFmt(f); setOut(null); }}>{FMT_LABEL[f]}</button>
++            ))}
++          </div>
++
++          <div className="preview checker">
++            <img src={out?.url ?? srcUrl} alt="Preview" />
++          </div>
++
++          <div className="actions">
++            {!out ? (
++              <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Remove metadata"}</button>
++            ) : (
++              <button className="btn primary" type="button" onClick={download}>Download clean {FMT_LABEL[fmt]}</button>
++            )}
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+new file mode 100644
+index 0000000..15b85eb
+--- /dev/null
++++ b/components/ResizeImage.tsx
+@@ -0,0 +1,146 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload,
++  baseName, prettyBytes, FMT_EXT,
++} from "@/lib/image";
++
++export default function ImageResizer() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [w, setW] = useState(0);
++  const [h, setH] = useState(0);
++  const [lock, setLock] = useState(true);
++  const [out, setOut] = useState<{ url: string; size: number } | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++  const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current);
++  }, [srcUrl, out]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    const s = sourceSize(decoded);
++    setNat(s); setW(s.w); setH(s.h);
++    setName(file.name);
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++    setOut(null);
++  }, []);
++
++  const changeW = (v: number) => {
++    const nw = Math.max(1, Math.round(v || 0));
++    setW(nw); if (lock) setH(Math.max(1, Math.round(nw / ratio)));
++  };
++  const changeH = (v: number) => {
++    const nh = Math.max(1, Math.round(v || 0));
++    setH(nh); if (lock) setW(Math.max(1, Math.round(nh * ratio)));
++  };
++  const scale = (pct: number) => {
++    setW(Math.max(1, Math.round((nat.w * pct) / 100)));
++    setH(Math.max(1, Math.round((nat.h * pct) / 100)));
++  };
++
++  const run = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    const canvas = document.createElement("canvas");
++    canvas.width = w; canvas.height = h;
++    const ctx = canvas.getContext("2d")!;
++    ctx.imageSmoothingQuality = "high";
++    ctx.drawImage(bmp.current, 0, 0, w, h);
++    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
++    const blob = await canvasToBlob(canvas, fmt, 0.92);
++    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
++    setBusy(false);
++  }, [w, h, name]);
++
++  const download = () => {
++    if (!out) return;
++    const ext = name.match(/\.jpe?g$/i) ? FMT_EXT["image/jpeg"] : name.match(/\.webp$/i) ? FMT_EXT["image/webp"] : FMT_EXT["image/png"];
++    triggerDownload(out.url, `${baseName(name)}-${w}x${h}.${ext}`);
++  };
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 });
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  return (
++    <div className="tool">
++      {!srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to resize</h2>
++          <p>Set exact pixels or scale by percent · resizes in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" />
++            <span>{nat.w}×{nat.h}</span>
++            {out && (<><span className="dot" /><span>→ {w}×{h} · {prettyBytes(out.size)}</span></>)}
++          </div>
++
++          <div className="controls">
++            <label className="ctrl">Width (px)
++              <input className="num-input mono" type="number" inputMode="numeric" min={1} value={w} onChange={(e) => changeW(+e.target.value)} />
++            </label>
++            <label className="ctrl">Height (px)
++              <input className="num-input mono" type="number" inputMode="numeric" min={1} value={h} onChange={(e) => changeH(+e.target.value)} />
++            </label>
++          </div>
++
++          <div className="fmt-row">
++            <button type="button" className={`fmt-btn${lock ? " on" : ""}`} onClick={() => setLock((v) => !v)}>
++              {lock ? "🔒 Ratio locked" : "🔓 Ratio free"}
++            </button>
++            {[25, 50, 75, 100].map((p) => (
++              <button key={p} type="button" className="fmt-btn" onClick={() => scale(p)}>{p}%</button>
++            ))}
++          </div>
++
++          <div className="preview checker">
++            <img src={out?.url ?? srcUrl} alt="Preview" />
++          </div>
++
++          <div className="actions">
++            {!out ? (
++              <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Resize image"}</button>
++            ) : (
++              <>
++                <button className="btn primary" type="button" onClick={download}>Download</button>
++                <button className="btn" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Re-run"}</button>
++              </>
++            )}
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/RotateImage.tsx b/components/RotateImage.tsx
+new file mode 100644
+index 0000000..ae40456
+--- /dev/null
++++ b/components/RotateImage.tsx
+@@ -0,0 +1,117 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload,
++  baseName, outputFmt, FMT_EXT,
++} from "@/lib/image";
++
++export default function ImageRotator() {
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [deg, setDeg] = useState(0);
++  const [flipH, setFlipH] = useState(false);
++  const [flipV, setFlipV] = useState(false);
++  const [busy, setBusy] = useState(false);
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    release(bmp.current);
++  }, [srcUrl]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    setNat(sourceSize(decoded));
++    setName(file.name);
++    setDeg(0); setFlipH(false); setFlipV(false);
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++  }, []);
++
++  const download = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    const rad = (deg * Math.PI) / 180;
++    const swap = deg % 180 !== 0;
++    const canvas = document.createElement("canvas");
++    canvas.width = swap ? nat.h : nat.w;
++    canvas.height = swap ? nat.w : nat.h;
++    const ctx = canvas.getContext("2d")!;
++    ctx.save();
++    ctx.translate(canvas.width / 2, canvas.height / 2);
++    ctx.rotate(rad);
++    ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
++    ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
++    ctx.restore();
++    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
++    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
++    if (blob) {
++      const url = URL.createObjectURL(blob);
++      triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
++      setTimeout(() => URL.revokeObjectURL(url), 4000);
++    }
++    setBusy(false);
++  }, [deg, flipH, flipV, nat, name]);
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 });
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  return (
++    <div className="tool">
++      {!srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to rotate</h2>
++          <p>Turn 90° at a time or mirror it · runs in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" /><span>{nat.w}×{nat.h}</span>
++          </div>
++
++          <div className="fmt-row">
++            <button type="button" className="fmt-btn" onClick={() => setDeg((d) => (d + 270) % 360)}>↺ Left</button>
++            <button type="button" className="fmt-btn" onClick={() => setDeg((d) => (d + 90) % 360)}>↻ Right</button>
++            <button type="button" className={`fmt-btn${flipH ? " on" : ""}`} onClick={() => setFlipH((v) => !v)}>⇋ Flip H</button>
++            <button type="button" className={`fmt-btn${flipV ? " on" : ""}`} onClick={() => setFlipV((v) => !v)}>⇅ Flip V</button>
++          </div>
++
++          <div className="preview checker">
++            <img
++              src={srcUrl}
++              alt="Preview"
++              style={{ transform: `rotate(${deg}deg) scaleX(${flipH ? -1 : 1}) scaleY(${flipV ? -1 : 1})`, transition: "transform 0.2s ease" }}
++            />
++          </div>
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={download} disabled={busy}>{busy ? "Working…" : "Download"}</button>
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/lib/image.ts b/lib/image.ts
+new file mode 100644
+index 0000000..fdf8c1e
+--- /dev/null
++++ b/lib/image.ts
+@@ -0,0 +1,92 @@
++// Shared client-side image helpers.
++// Everything here runs on the device — no network, no upload.
++
++export type Fmt = "image/png" | "image/jpeg" | "image/webp";
++
++export const FMT_LABEL: Record<Fmt, string> = {
++  "image/png": "PNG",
++  "image/jpeg": "JPG",
++  "image/webp": "WebP",
++};
++export const FMT_EXT: Record<Fmt, string> = {
++  "image/png": "png",
++  "image/jpeg": "jpg",
++  "image/webp": "webp",
++};
++
++export function prettyBytes(n: number): string {
++  if (n < 1024) return `${n} B`;
++  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
++  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
++}
++
++export function outputFmt(type: string): Fmt {
++  if (type === "image/webp") return "image/webp";
++  if (type === "image/png") return "image/png";
++  return "image/jpeg";
++}
++
++// createImageBitmap decodes off the main thread and uses far less memory
++// than an <img> element — the key win on low-end phones. Falls back to
++// <img> where the API (or from-image orientation) is unavailable.
++export async function decode(file: File): Promise<ImageBitmap | HTMLImageElement> {
++  if (typeof createImageBitmap === "function") {
++    try {
++      return await createImageBitmap(file, { imageOrientation: "from-image" });
++    } catch {
++      try {
++        return await createImageBitmap(file);
++      } catch {
++        /* fall through to <img> */
++      }
++    }
++  }
++  const url = URL.createObjectURL(file);
++  try {
++    const img = new Image();
++    img.decoding = "async";
++    await new Promise<void>((res, rej) => {
++      img.onload = () => res();
++      img.onerror = () => rej(new Error("decode failed"));
++      img.src = url;
++    });
++    return img;
++  } finally {
++    URL.revokeObjectURL(url);
++  }
++}
++
++export function sourceSize(src: ImageBitmap | HTMLImageElement): { w: number; h: number } {
++  if ("naturalWidth" in src) return { w: src.naturalWidth, h: src.naturalHeight };
++  return { w: src.width, h: src.height };
++}
++
++// Free the decoded bitmap's memory as soon as we're done with it.
++export function release(src: ImageBitmap | HTMLImageElement | null): void {
++  if (src && "close" in src) {
++    try {
++      src.close();
++    } catch {
++      /* already closed */
++    }
++  }
++}
++
++export function canvasToBlob(
++  canvas: HTMLCanvasElement,
++  type: Fmt,
++  quality = 0.92
++): Promise<Blob | null> {
++  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
++}
++
++export function triggerDownload(url: string, filename: string): void {
++  const a = document.createElement("a");
++  a.href = url;
++  a.download = filename;
++  a.click();
++}
++
++export function baseName(name: string): string {
++  return name.replace(/\.[^.]+$/, "");
++}

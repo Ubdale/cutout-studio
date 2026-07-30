@@ -22,6 +22,41 @@ const tools = [
     pill: "Live",
     live: true,
   },
+  {
+    href: "/resize-image",
+    title: "Resize image",
+    desc: "Set exact width and height, or scale by percent.",
+    pill: "Live",
+    live: true,
+  },
+  {
+    href: "/crop-image",
+    title: "Crop image",
+    desc: "Drag to any size or snap to a common ratio.",
+    pill: "Live",
+    live: true,
+  },
+  {
+    href: "/rotate-image",
+    title: "Rotate & flip",
+    desc: "Turn 90° at a time or mirror the image.",
+    pill: "Live",
+    live: true,
+  },
+  {
+    href: "/remove-metadata",
+    title: "Remove metadata",
+    desc: "Strip EXIF, GPS and camera data before you share.",
+    pill: "Live",
+    live: true,
+  },
+  {
+    href: "/circle-crop",
+    title: "Circle crop",
+    desc: "Round profile picture on a transparent PNG.",
+    pill: "Live",
+    live: true,
+  },
 ];
 
 export default function Home() {
