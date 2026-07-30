@@ -9,6 +9,11 @@ import {
 
 type Phase = "idle" | "working" | "done" | "error";
 
+// Model choice: fp16 is ~half the download of the full isnet model and
+// noticeably faster to run, with near-identical quality. Switch to
+// "isnet_quint8" for the smallest, fastest option on very low-end phones.
+const MODEL = "isnet_fp16" as const;
+
 function prettyBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -44,9 +49,9 @@ export default function BackgroundRemover() {
     const id = schedule(async () => {
       try {
         const mod = (await import("@imgly/background-removal")) as {
-          preload?: () => Promise<void>;
+          preload?: (config?: unknown) => Promise<void>;
         };
-        await mod.preload?.();
+        await mod.preload?.({ model: MODEL });
       } catch {
         /* preload is best-effort */
       }
@@ -103,7 +108,13 @@ export default function BackgroundRemover() {
       // load the library only when needed (keeps the page light)
       const { removeBackground } = await import("@imgly/background-removal");
 
+      // WebGPU is dramatically faster where the browser supports it;
+      // fall back to CPU (WASM) everywhere else.
+      const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
+
       const result = await removeBackground(file, {
+        model: MODEL,
+        device: useGpu ? "gpu" : "cpu",
         output: { format: "image/png" },
         progress: (key: string, current: number, total: number) => {
           if (key.startsWith("fetch")) {
