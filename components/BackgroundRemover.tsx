@@ -11,17 +11,21 @@ import BulkPanel, { type BulkResult } from "./BulkPanel";
 
 type Phase = "idle" | "working" | "done" | "error";
 
-// Model choice: fp16 is ~half the download of the full isnet model and
-// noticeably faster to run, with near-identical quality. Switch to
-// "isnet_quint8" for the smallest, fastest option on very low-end phones.
-const MODEL = "isnet_fp16" as const;
+// fp16: best quality, larger one-time model download (~85MB), still fast
+// on GPU/multi-core CPU. quint8 (int8-quantized): ~40MB download and
+// noticeably faster inference, at a small edge-detail quality cost —
+// this is the "Fast mode" option below for older/low-core devices.
+type ModelId = "isnet_fp16" | "isnet_quint8";
 
-async function removeBgFile(file: File): Promise<Blob> {
+async function removeBgFile(file: File, model: ModelId): Promise<Blob> {
   const { removeBackground } = await import("@imgly/background-removal");
   const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
   return removeBackground(file, {
-    model: MODEL,
+    model,
     device: useGpu ? "gpu" : "cpu",
+    // Lets WebGPU inference run off the main thread instead of blocking
+    // the UI while it works.
+    proxyToWorker: true,
     output: { format: "image/png" },
   });
 }
@@ -34,6 +38,7 @@ function prettyBytes(n: number) {
 
 export default function BackgroundRemover() {
   const [mode, setMode] = useState<"single" | "bulk">("single");
+  const [model, setModel] = useState<ModelId>("isnet_fp16");
   const [phase, setPhase] = useState<Phase>("idle");
   const [over, setOver] = useState(false);
   const [status, setStatus] = useState("");
@@ -66,13 +71,13 @@ export default function BackgroundRemover() {
         const mod = (await import("@imgly/background-removal")) as {
           preload?: (config?: unknown) => Promise<void>;
         };
-        await mod.preload?.({ model: MODEL });
+        await mod.preload?.({ model });
       } catch {
         /* preload is best-effort */
       }
     });
     return () => w.cancelIdleCallback?.(id as number);
-  }, []);
+  }, [model]);
 
   // clean up object URLs
   useEffect(() => {
@@ -129,8 +134,9 @@ export default function BackgroundRemover() {
       const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
 
       const result = await removeBackground(file, {
-        model: MODEL,
+        model,
         device: useGpu ? "gpu" : "cpu",
+        proxyToWorker: true,
         output: { format: "image/png" },
         progress: (key: string, current: number, total: number) => {
           if (key.startsWith("fetch")) {
@@ -153,7 +159,7 @@ export default function BackgroundRemover() {
       );
       setPhase("error");
     }
-  }, []);
+  }, [model]);
 
   const onInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -216,15 +222,35 @@ export default function BackgroundRemover() {
   const aspect = info && info.w && info.h ? `${info.w} / ${info.h}` : "4 / 3";
 
   const bulkProcess = useCallback(async (file: File): Promise<BulkResult> => {
-    const blob = await removeBgFile(file);
+    const blob = await removeBgFile(file, model);
     return { blob, ext: "png" };
-  }, []);
+  }, [model]);
 
   return (
     <div className="tool">
       <div className="mode-row">
         <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
         <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+      </div>
+      <div className="mode-row">
+        <button
+          type="button"
+          className={`mode-btn${model === "isnet_fp16" ? " on" : ""}`}
+          onClick={() => setModel("isnet_fp16")}
+          disabled={phase === "working"}
+          title="Best edge quality"
+        >
+          Best quality
+        </button>
+        <button
+          type="button"
+          className={`mode-btn${model === "isnet_quint8" ? " on" : ""}`}
+          onClick={() => setModel("isnet_quint8")}
+          disabled={phase === "working"}
+          title="Smaller model, faster on low-end devices"
+        >
+          Fast mode
+        </button>
       </div>
 
       {mode === "bulk" ? (
