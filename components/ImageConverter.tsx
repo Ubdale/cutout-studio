@@ -1,12 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FMT_LABEL as LABEL, FMT_EXT as EXT, type Fmt } from "@/lib/image";
+import BulkPanel, { type BulkResult } from "./BulkPanel";
 
-type Fmt = "image/png" | "image/jpeg" | "image/webp";
-const LABEL: Record<Fmt, string> = { "image/png": "PNG", "image/jpeg": "JPG", "image/webp": "WebP" };
-const EXT: Record<Fmt, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+function convertFile(file: File, f: Fmt): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const ctx = canvas.getContext("2d")!;
+      if (f === "image/jpeg") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(image, 0, 0);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.92);
+    };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
+    image.src = url;
+  });
+}
 
 export default function ImageConverter() {
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   const [over, setOver] = useState(false);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [srcUrl, setSrcUrl] = useState<string | null>(null);
@@ -83,9 +104,34 @@ export default function ImageConverter() {
     a.click();
   };
 
+  const bulkProcess = useCallback(
+    async (file: File): Promise<BulkResult> => ({ blob: await convertFile(file, fmt), ext: EXT[fmt] }),
+    [fmt]
+  );
+
   return (
     <div className="tool">
-      {!img ? (
+      <div className="mode-row">
+        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
+        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+      </div>
+
+      {mode === "bulk" ? (
+        <>
+          <div className="fmt-row">
+            {(Object.keys(LABEL) as Fmt[]).map((f) => (
+              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
+                {LABEL[f]}
+              </button>
+            ))}
+          </div>
+          <BulkPanel
+            process={bulkProcess}
+            zipName="converted-images.zip"
+            hint={`Every file converted to ${LABEL[fmt]}, in parallel`}
+          />
+        </>
+      ) : !img ? (
         <div
           className={`drop${over ? " over" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}

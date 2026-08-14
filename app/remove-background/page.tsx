@@ -3,9 +3,15 @@ import Link from "next/link";
 import BackgroundRemover from "@/components/BackgroundRemover";
 
 export const metadata: Metadata = {
-  title: "Remove image background — free & private",
+  title: "Remove Background from Image Instantly — Free, No Upload",
   description:
-    "Remove the background from any image for free. Runs entirely in your browser, so nothing is uploaded. No sign-up, no watermark, unlimited use.",
+    "Remove image backgrounds in seconds, right in your browser — no server upload, no signup, no watermark. Download as PNG, JPG or WebP.",
+  keywords: [
+    "remove background from image",
+    "background remover online",
+    "transparent background maker",
+    "remove bg free",
+  ],
   alternates: { canonical: "/remove-background" },
 };
 

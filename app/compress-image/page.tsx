@@ -3,9 +3,15 @@ import Link from "next/link";
 import ImageCompressor from "@/components/ImageCompressor";
 
 export const metadata: Metadata = {
-  title: "Compress image — free & private",
+  title: "Compress Image Online — Fast, Free, No Server Upload",
   description:
-    "Compress JPG, PNG and WebP images for free. Runs entirely in your browser, nothing is uploaded. Adjust quality and size, then download.",
+    "Compress JPG, PNG or WebP images instantly in your browser — zero upload wait. Adjust quality and width, then export as JPG, PNG or WebP.",
+  keywords: [
+    "compress image online",
+    "reduce image file size",
+    "image compressor free",
+    "shrink jpg png",
+  ],
   alternates: { canonical: "/compress-image" },
 };
 

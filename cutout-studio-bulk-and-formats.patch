@@ -1,0 +1,1151 @@
+diff --git a/app/globals.css b/app/globals.css
+index a551277..664826e 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -663,3 +663,69 @@ button {
+ .crop-handle.ne { right: 0; top: 0; cursor: nesw-resize; }
+ .crop-handle.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+ .crop-handle.se { right: 0; bottom: 0; cursor: nwse-resize; }
++
++/* ---------- bulk mode ---------- */
++.mode-row {
++  display: flex;
++  gap: 8px;
++  padding: 10px 10px 0;
++}
++.mode-btn {
++  flex: 1;
++  border: 1px solid var(--line);
++  background: var(--surface);
++  border-radius: 10px;
++  padding: 10px;
++  font-weight: 600;
++  font-size: 13px;
++  color: var(--muted);
++  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
++}
++.mode-btn:hover {
++  border-color: var(--muted);
++}
++.mode-btn.on {
++  background: var(--ink);
++  border-color: var(--ink);
++  color: var(--surface);
++}
++.bulk-list {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  max-height: 360px;
++  overflow-y: auto;
++  padding: 6px;
++  margin-bottom: 4px;
++}
++.bulk-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 10px 12px;
++  border: 1px solid var(--line);
++  border-radius: 10px;
++  background: var(--surface);
++}
++.bulk-row.error {
++  border-color: #d94f4f;
++}
++.bulk-name {
++  flex: 1;
++  font-size: 13px;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.bulk-status {
++  font-size: 12px;
++  color: var(--muted);
++  white-space: nowrap;
++}
++.bulk-row.error .bulk-status {
++  color: #d94f4f;
++}
++.btn.small {
++  padding: 6px 12px;
++  font-size: 13px;
++}
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index 090af5a..14535a5 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -6,6 +6,8 @@ import {
+   useRef,
+   useState,
+ } from "react";
++import { FMT_LABEL, FMT_EXT, type Fmt } from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ type Phase = "idle" | "working" | "done" | "error";
+ 
+@@ -14,6 +16,16 @@ type Phase = "idle" | "working" | "done" | "error";
+ // "isnet_quint8" for the smallest, fastest option on very low-end phones.
+ const MODEL = "isnet_fp16" as const;
+ 
++async function removeBgFile(file: File): Promise<Blob> {
++  const { removeBackground } = await import("@imgly/background-removal");
++  const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
++  return removeBackground(file, {
++    model: MODEL,
++    device: useGpu ? "gpu" : "cpu",
++    output: { format: "image/png" },
++  });
++}
++
+ function prettyBytes(n: number) {
+   if (n < 1024) return `${n} B`;
+   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+@@ -21,6 +33,7 @@ function prettyBytes(n: number) {
+ }
+ 
+ export default function BackgroundRemover() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
+   const [phase, setPhase] = useState<Phase>("idle");
+   const [over, setOver] = useState(false);
+   const [status, setStatus] = useState("");
+@@ -29,6 +42,8 @@ export default function BackgroundRemover() {
+ 
+   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
+   const [cutoutUrl, setCutoutUrl] = useState<string | null>(null);
++  const [fmt, setFmt] = useState<Fmt>("image/png");
++  const [downloading, setDownloading] = useState(false);
+   const [info, setInfo] = useState<{
+     name: string;
+     size: number;
+@@ -77,6 +92,7 @@ export default function BackgroundRemover() {
+     setError("");
+     setStatus("");
+     setPos(50);
++    setFmt("image/png");
+     setPhase("idle");
+     if (inputRef.current) inputRef.current.value = "";
+   }, [originalUrl, cutoutUrl]);
+@@ -151,22 +167,75 @@ export default function BackgroundRemover() {
+     if (f) handleFile(f);
+   };
+ 
+-  const download = () => {
++  const download = useCallback(async () => {
+     if (!cutoutBlob.current || !info) return;
+-    const url = URL.createObjectURL(cutoutBlob.current);
+-    const a = document.createElement("a");
+     const base = info.name.replace(/\.[^.]+$/, "");
+-    a.href = url;
+-    a.download = `${base}-cutout.png`;
+-    a.click();
+-    URL.revokeObjectURL(url);
+-  };
++
++    // PNG keeps the alpha channel straight from the model's output — no
++    // re-encode needed, so this path stays instant.
++    if (fmt === "image/png") {
++      const url = URL.createObjectURL(cutoutBlob.current);
++      const a = document.createElement("a");
++      a.href = url;
++      a.download = `${base}-cutout.png`;
++      a.click();
++      URL.revokeObjectURL(url);
++      return;
++    }
++
++    // JPG/WebP: composite onto a white canvas first since JPG has no
++    // transparency (and a transparent WebP export would look identical
++    // to the PNG, just heavier for photo-style output).
++    setDownloading(true);
++    try {
++      const bmp = await createImageBitmap(cutoutBlob.current);
++      const canvas = document.createElement("canvas");
++      canvas.width = bmp.width;
++      canvas.height = bmp.height;
++      const ctx = canvas.getContext("2d")!;
++      ctx.fillStyle = "#fff";
++      ctx.fillRect(0, 0, canvas.width, canvas.height);
++      ctx.drawImage(bmp, 0, 0);
++      bmp.close?.();
++      canvas.toBlob((blob) => {
++        if (blob) {
++          const url = URL.createObjectURL(blob);
++          const a = document.createElement("a");
++          a.href = url;
++          a.download = `${base}-cutout.${FMT_EXT[fmt]}`;
++          a.click();
++          URL.revokeObjectURL(url);
++        }
++        setDownloading(false);
++      }, fmt, 0.92);
++    } catch {
++      setDownloading(false);
++    }
++  }, [fmt, info]);
+ 
+   const aspect = info && info.w && info.h ? `${info.w} / ${info.h}` : "4 / 3";
+ 
++  const bulkProcess = useCallback(async (file: File): Promise<BulkResult> => {
++    const blob = await removeBgFile(file);
++    return { blob, ext: "png" };
++  }, []);
++
+   return (
+     <div className="tool">
+-      {phase === "idle" && (
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      {mode === "bulk" ? (
++        <BulkPanel
++          process={bulkProcess}
++          heavy
++          zipName="cutouts.zip"
++          suffix="-cutout"
++          hint="Runs 1-2 at a time — background removal is the heaviest tool here, so this keeps it stable instead of racing every core at once"
++        />
++      ) : phase === "idle" && (
+         <div
+           className={`drop${over ? " over" : ""}`}
+           onDragOver={(e) => {
+@@ -198,7 +267,7 @@ export default function BackgroundRemover() {
+         </div>
+       )}
+ 
+-      {phase !== "idle" && (
++      {mode === "single" && phase !== "idle" && (
+         <div className="stage">
+           {info && (
+             <div className="meta mono">
+@@ -269,10 +338,26 @@ export default function BackgroundRemover() {
+             </div>
+           )}
+ 
++          {phase === "done" && (
++            <div className="fmt-row">
++              {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++                <button
++                  key={f}
++                  type="button"
++                  className={`fmt-btn${fmt === f ? " on" : ""}`}
++                  onClick={() => setFmt(f)}
++                  title={f === "image/png" ? "Keeps transparency" : "Adds a white background"}
++                >
++                  {FMT_LABEL[f]}
++                </button>
++              ))}
++            </div>
++          )}
++
+           <div className="actions">
+             {phase === "done" && (
+-              <button className="btn primary" type="button" onClick={download}>
+-                Download PNG
++              <button className="btn primary" type="button" onClick={download} disabled={downloading}>
++                {downloading ? "Preparing…" : `Download ${FMT_LABEL[fmt]}`}
+               </button>
+             )}
+             <button className="btn" type="button" onClick={reset}>
+diff --git a/components/BulkPanel.tsx b/components/BulkPanel.tsx
+new file mode 100644
+index 0000000..48c76c4
+--- /dev/null
++++ b/components/BulkPanel.tsx
+@@ -0,0 +1,155 @@
++"use client";
++
++import { useRef, useState } from "react";
++import { prettyBytes } from "@/lib/image";
++import { runQueue, downloadZip, idealConcurrency, type QueueItem, type CancelToken } from "@/lib/bulk";
++
++export interface BulkResult {
++  blob: Blob;
++  ext: string;
++}
++
++export default function BulkPanel({
++  process,
++  heavy = false,
++  zipName = "images.zip",
++  hint,
++  suffix = "",
++}: {
++  /** Converts one input file to one output blob, using the tool's current settings. */
++  process: (file: File) => Promise<BulkResult>;
++  /** True for WASM/ML-heavy work (background removal) — runs fewer in parallel. */
++  heavy?: boolean;
++  zipName?: string;
++  hint?: string;
++  /** appended before the extension, e.g. "-compressed" */
++  suffix?: string;
++}) {
++  const [items, setItems] = useState<QueueItem<BulkResult>[]>([]);
++  const [running, setRunning] = useState(false);
++  const [over, setOver] = useState(false);
++  const cancelRef = useRef<CancelToken>({ cancelled: false });
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  const outName = (file: File, ext: string) =>
++    file.name.replace(/\.[^.]+$/, "") + suffix + "." + ext;
++
++  const start = async (files: File[]) => {
++    const imgFiles = files.filter((f) => f.type.startsWith("image/"));
++    if (!imgFiles.length) return;
++    cancelRef.current = { cancelled: false };
++    setRunning(true);
++    await runQueue(imgFiles, process, {
++      concurrency: idealConcurrency(heavy),
++      onUpdate: setItems,
++      signal: cancelRef.current,
++    });
++    setRunning(false);
++  };
++
++  const done = items.filter((i) => i.status === "done" && i.result);
++  const totalIn = items.reduce((s, i) => s + i.file.size, 0);
++  const totalOut = done.reduce((s, i) => s + (i.result?.blob.size ?? 0), 0);
++
++  const downloadAll = async () => {
++    if (!done.length) return;
++    await downloadZip(
++      done.map((i) => ({ name: outName(i.file, i.result!.ext), blob: i.result!.blob })),
++      zipName
++    );
++  };
++
++  const downloadOne = (it: QueueItem<BulkResult>) => {
++    if (!it.result) return;
++    const url = URL.createObjectURL(it.result.blob);
++    const a = document.createElement("a");
++    a.href = url;
++    a.download = outName(it.file, it.result.ext);
++    a.click();
++    URL.revokeObjectURL(url);
++  };
++
++  const cancel = () => {
++    cancelRef.current.cancelled = true;
++    setRunning(false);
++  };
++
++  const clear = () => {
++    setItems([]);
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  return (
++    <>
++      {items.length === 0 ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); start(Array.from(e.dataTransfer.files)); }}
++          onClick={() => inputRef.current?.click()}
++          role="button"
++          tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop multiple images to batch process</h2>
++          <p>{hint || "Same settings applied to every file, in parallel · no upload, no file limit"}</p>
++          <button className="pick" type="button">Choose images</button>
++          <input
++            ref={inputRef}
++            className="hidden-input"
++            type="file"
++            accept="image/*"
++            multiple
++            onChange={(e) => start(Array.from(e.target.files ?? []))}
++          />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{items.length} files</span>
++            <span className="dot" />
++            <span>{done.length} done{running ? "…" : ""}</span>
++            {totalOut > 0 && (
++              <>
++                <span className="dot" />
++                <span>{prettyBytes(totalIn)} → {prettyBytes(totalOut)}</span>
++              </>
++            )}
++          </div>
++
++          <div className="bulk-list">
++            {items.map((it) => (
++              <div key={it.id} className={`bulk-row ${it.status}`}>
++                <span className="bulk-name mono">{it.file.name}</span>
++                <span className="bulk-status mono">
++                  {it.status === "queued" && "Queued"}
++                  {it.status === "working" && "Working…"}
++                  {it.status === "done" && it.result && prettyBytes(it.result.blob.size)}
++                  {it.status === "error" && (it.error || "Failed")}
++                </span>
++                {it.status === "done" && (
++                  <button className="btn small" type="button" onClick={() => downloadOne(it)}>
++                    Download
++                  </button>
++                )}
++              </div>
++            ))}
++          </div>
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={downloadAll} disabled={!done.length}>
++              Download all as ZIP ({done.length})
++            </button>
++            {running ? (
++              <button className="btn" type="button" onClick={cancel}>Cancel</button>
++            ) : (
++              <button className="btn" type="button" onClick={clear}>Clear</button>
++            )}
++          </div>
++        </div>
++      )}
++    </>
++  );
++}
+diff --git a/components/ImageCompressor.tsx b/components/ImageCompressor.tsx
+index 7abebdf..b4aef85 100644
+--- a/components/ImageCompressor.tsx
++++ b/components/ImageCompressor.tsx
+@@ -1,16 +1,43 @@
+ "use client";
+ 
+ import { useCallback, useEffect, useRef, useState } from "react";
+-
+-function prettyBytes(n: number) {
+-  if (n < 1024) return `${n} B`;
+-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+-}
++import { prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt } from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ type Result = { url: string; blob: Blob; w: number; h: number };
+ 
++// Shared by both the single-file preview path and bulk mode so the two
++// never drift out of sync.
++function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result> {
++  return new Promise((resolve, reject) => {
++    const url = URL.createObjectURL(file);
++    const image = new Image();
++    image.onload = () => {
++      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
++      const w = Math.round(image.naturalWidth * scale);
++      const h = Math.round(image.naturalHeight * scale);
++      const canvas = document.createElement("canvas");
++      canvas.width = w;
++      canvas.height = h;
++      const ctx = canvas.getContext("2d")!;
++      if (f === "image/jpeg") {
++        ctx.fillStyle = "#fff";
++        ctx.fillRect(0, 0, w, h);
++      }
++      ctx.drawImage(image, 0, 0, w, h);
++      URL.revokeObjectURL(url);
++      canvas.toBlob((blob) => {
++        if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
++        else reject(new Error("Could not encode"));
++      }, f, q);
++    };
++    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
++    image.src = url;
++  });
++}
++
+ export default function ImageCompressor() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
+   const [over, setOver] = useState(false);
+   const [srcUrl, setSrcUrl] = useState<string | null>(null);
+   const [img, setImg] = useState<HTMLImageElement | null>(null);
+@@ -18,6 +45,7 @@ export default function ImageCompressor() {
+   const [origSize, setOrigSize] = useState(0);
+   const [quality, setQuality] = useState(0.7);
+   const [maxW, setMaxW] = useState(0); // 0 = keep original width
++  const [fmt, setFmt] = useState<Fmt>("image/jpeg");
+   const [out, setOut] = useState<Result | null>(null);
+   const [busy, setBusy] = useState(false);
+   const inputRef = useRef<HTMLInputElement>(null);
+@@ -30,7 +58,7 @@ export default function ImageCompressor() {
+   }, [srcUrl, out]);
+ 
+   const compress = useCallback(
+-    (image: HTMLImageElement, q: number, mw: number) => {
++    (image: HTMLImageElement, q: number, mw: number, f: Fmt) => {
+       setBusy(true);
+       const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+       const w = Math.round(image.naturalWidth * scale);
+@@ -39,6 +67,12 @@ export default function ImageCompressor() {
+       canvas.width = w;
+       canvas.height = h;
+       const ctx = canvas.getContext("2d")!;
++      // PNG has no alpha loss to worry about, but JPG needs an opaque
++      // background or transparent pixels turn black.
++      if (f === "image/jpeg") {
++        ctx.fillStyle = "#fff";
++        ctx.fillRect(0, 0, w, h);
++      }
+       ctx.drawImage(image, 0, 0, w, h);
+       canvas.toBlob(
+         (blob) => {
+@@ -50,7 +84,7 @@ export default function ImageCompressor() {
+           }
+           setBusy(false);
+         },
+-        "image/jpeg",
++        f,
+         q
+       );
+     },
+@@ -64,10 +98,12 @@ export default function ImageCompressor() {
+       setSrcUrl(url);
+       setName(file.name);
+       setOrigSize(file.size);
++      const detected = outputFmt(file.type);
++      setFmt(detected);
+       const image = new Image();
+       image.onload = () => {
+         setImg(image);
+-        compress(image, quality, maxW);
++        compress(image, quality, maxW, detected);
+       };
+       image.src = url;
+     },
+@@ -76,9 +112,9 @@ export default function ImageCompressor() {
+ 
+   // re-compress when settings change
+   useEffect(() => {
+-    if (img) compress(img, quality, maxW);
++    if (img) compress(img, quality, maxW, fmt);
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [quality, maxW]);
++  }, [quality, maxW, fmt]);
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+@@ -95,15 +131,57 @@ export default function ImageCompressor() {
+     if (!out) return;
+     const a = document.createElement("a");
+     a.href = out.url;
+-    a.download = name.replace(/\.[^.]+$/, "") + "-compressed.jpg";
++    a.download = name.replace(/\.[^.]+$/, "") + "-compressed." + FMT_EXT[fmt];
+     a.click();
+   };
+ 
+   const saved = out && origSize ? Math.max(0, Math.round((1 - out.blob.size / origSize) * 100)) : 0;
+ 
++  const bulkProcess = useCallback(
++    async (file: File): Promise<BulkResult> => {
++      const r = await compressFile(file, quality, maxW, fmt);
++      URL.revokeObjectURL(r.url); // bulk mode only needs the blob, not a preview URL
++      return { blob: r.blob, ext: FMT_EXT[fmt] };
++    },
++    [quality, maxW, fmt]
++  );
++
+   return (
+     <div className="tool">
+-      {!img ? (
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      {mode === "bulk" ? (
++        <>
++          <div className="controls">
++            {fmt !== "image/png" && (
++              <label className="ctrl">
++                <span>Quality: {Math.round(quality * 100)}%</span>
++                <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
++              </label>
++            )}
++            <label className="ctrl">
++              <span>Max width: {maxW ? `${maxW}px` : "original"}</span>
++              <input type="range" min={0} max={4000} step={100} value={maxW} onChange={(e) => setMaxW(Number(e.target.value))} />
++            </label>
++          </div>
++          <div className="fmt-row">
++            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
++                {FMT_LABEL[f]}
++              </button>
++            ))}
++          </div>
++          <BulkPanel
++            process={bulkProcess}
++            zipName="compressed-images.zip"
++            suffix="-compressed"
++            hint="Same quality, width and format settings applied to every file, in parallel"
++          />
++        </>
++      ) : !img ? (
+         <div
+           className={`drop${over ? " over" : ""}`}
+           onDragOver={(e) => {
+@@ -145,16 +223,26 @@ export default function ImageCompressor() {
+           </div>
+ 
+           <div className="controls">
+-            <label className="ctrl">
+-              <span>Quality: {Math.round(quality * 100)}%</span>
+-              <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
+-            </label>
++            {fmt !== "image/png" && (
++              <label className="ctrl">
++                <span>Quality: {Math.round(quality * 100)}%</span>
++                <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
++              </label>
++            )}
+             <label className="ctrl">
+               <span>Max width: {maxW ? `${maxW}px` : "original"}</span>
+               <input type="range" min={0} max={4000} step={100} value={maxW} onChange={(e) => setMaxW(Number(e.target.value))} />
+             </label>
+           </div>
+ 
++          <div className="fmt-row">
++            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
++                {FMT_LABEL[f]}
++              </button>
++            ))}
++          </div>
++
+           {out && (
+             <div className="preview checker">
+               <img src={out.url} alt="Compressed preview" />
+@@ -163,7 +251,7 @@ export default function ImageCompressor() {
+ 
+           <div className="actions">
+             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
+-              {busy ? "Working…" : "Download JPG"}
++              {busy ? "Working…" : `Download ${FMT_LABEL[fmt]}`}
+             </button>
+             <button className="btn" type="button" onClick={reset}>New image</button>
+           </div>
+diff --git a/components/ImageConverter.tsx b/components/ImageConverter.tsx
+index 7e507d5..b175c36 100644
+--- a/components/ImageConverter.tsx
++++ b/components/ImageConverter.tsx
+@@ -1,12 +1,33 @@
+ "use client";
+ 
+ import { useCallback, useEffect, useRef, useState } from "react";
++import { FMT_LABEL as LABEL, FMT_EXT as EXT, type Fmt } from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+-type Fmt = "image/png" | "image/jpeg" | "image/webp";
+-const LABEL: Record<Fmt, string> = { "image/png": "PNG", "image/jpeg": "JPG", "image/webp": "WebP" };
+-const EXT: Record<Fmt, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
++function convertFile(file: File, f: Fmt): Promise<Blob> {
++  return new Promise((resolve, reject) => {
++    const url = URL.createObjectURL(file);
++    const image = new Image();
++    image.onload = () => {
++      const canvas = document.createElement("canvas");
++      canvas.width = image.naturalWidth;
++      canvas.height = image.naturalHeight;
++      const ctx = canvas.getContext("2d")!;
++      if (f === "image/jpeg") {
++        ctx.fillStyle = "#ffffff";
++        ctx.fillRect(0, 0, canvas.width, canvas.height);
++      }
++      ctx.drawImage(image, 0, 0);
++      URL.revokeObjectURL(url);
++      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.92);
++    };
++    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
++    image.src = url;
++  });
++}
+ 
+ export default function ImageConverter() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
+   const [over, setOver] = useState(false);
+   const [img, setImg] = useState<HTMLImageElement | null>(null);
+   const [srcUrl, setSrcUrl] = useState<string | null>(null);
+@@ -83,9 +104,34 @@ export default function ImageConverter() {
+     a.click();
+   };
+ 
++  const bulkProcess = useCallback(
++    async (file: File): Promise<BulkResult> => ({ blob: await convertFile(file, fmt), ext: EXT[fmt] }),
++    [fmt]
++  );
++
+   return (
+     <div className="tool">
+-      {!img ? (
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      {mode === "bulk" ? (
++        <>
++          <div className="fmt-row">
++            {(Object.keys(LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
++                {LABEL[f]}
++              </button>
++            ))}
++          </div>
++          <BulkPanel
++            process={bulkProcess}
++            zipName="converted-images.zip"
++            hint={`Every file converted to ${LABEL[fmt]}, in parallel`}
++          />
++        </>
++      ) : !img ? (
+         <div
+           className={`drop${over ? " over" : ""}`}
+           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index 15b85eb..73a0105 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -3,10 +3,34 @@
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import {
+   decode, sourceSize, release, canvasToBlob, triggerDownload,
+-  baseName, prettyBytes, FMT_EXT,
++  baseName, prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt,
+ } from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
++
++// Bulk mode resizes each file by the same percentage of its own original
++// size — a fixed target WxH doesn't make sense once files have different
++// aspect ratios, but "shrink everything to 50%" does.
++function resizeFileByPercent(file: File, pct: number, f: Fmt): Promise<Blob> {
++  return new Promise((resolve, reject) => {
++    decode(file).then((bmp) => {
++      const s = sourceSize(bmp);
++      const w = Math.max(1, Math.round((s.w * pct) / 100));
++      const h = Math.max(1, Math.round((s.h * pct) / 100));
++      const canvas = document.createElement("canvas");
++      canvas.width = w; canvas.height = h;
++      const ctx = canvas.getContext("2d")!;
++      ctx.imageSmoothingQuality = "high";
++      ctx.drawImage(bmp, 0, 0, w, h);
++      release(bmp);
++      canvasToBlob(canvas, f, 0.92).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
++    }).catch(reject);
++  });
++}
+ 
+ export default function ImageResizer() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
++  const [bulkPct, setBulkPct] = useState(50);
++  const [bulkFmt, setBulkFmt] = useState<Fmt>("image/jpeg");
+   const [over, setOver] = useState(false);
+   const [srcUrl, setSrcUrl] = useState<string | null>(null);
+   const [name, setName] = useState("");
+@@ -14,6 +38,7 @@ export default function ImageResizer() {
+   const [w, setW] = useState(0);
+   const [h, setH] = useState(0);
+   const [lock, setLock] = useState(true);
++  const [fmt, setFmt] = useState<Fmt>("image/png");
+   const [out, setOut] = useState<{ url: string; size: number } | null>(null);
+   const [busy, setBusy] = useState(false);
+ 
+@@ -35,6 +60,7 @@ export default function ImageResizer() {
+     const s = sourceSize(decoded);
+     setNat(s); setW(s.w); setH(s.h);
+     setName(file.name);
++    setFmt(outputFmt(file.type));
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+     setOut(null);
+   }, []);
+@@ -60,16 +86,14 @@ export default function ImageResizer() {
+     const ctx = canvas.getContext("2d")!;
+     ctx.imageSmoothingQuality = "high";
+     ctx.drawImage(bmp.current, 0, 0, w, h);
+-    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+     const blob = await canvasToBlob(canvas, fmt, 0.92);
+     if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     setBusy(false);
+-  }, [w, h, name]);
++  }, [w, h, fmt]);
+ 
+   const download = () => {
+     if (!out) return;
+-    const ext = name.match(/\.jpe?g$/i) ? FMT_EXT["image/jpeg"] : name.match(/\.webp$/i) ? FMT_EXT["image/webp"] : FMT_EXT["image/png"];
+-    triggerDownload(out.url, `${baseName(name)}-${w}x${h}.${ext}`);
++    triggerDownload(out.url, `${baseName(name)}-${w}x${h}.${FMT_EXT[fmt]}`);
+   };
+ 
+   const reset = () => {
+@@ -80,9 +104,44 @@ export default function ImageResizer() {
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
++  const bulkProcess = useCallback(
++    async (file: File): Promise<BulkResult> => ({
++      blob: await resizeFileByPercent(file, bulkPct, bulkFmt),
++      ext: FMT_EXT[bulkFmt],
++    }),
++    [bulkPct, bulkFmt]
++  );
++
+   return (
+     <div className="tool">
+-      {!srcUrl ? (
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      {mode === "bulk" ? (
++        <>
++          <div className="controls">
++            <label className="ctrl">
++              <span>Scale: {bulkPct}% of each file&apos;s original size</span>
++              <input type="range" min={5} max={100} value={bulkPct} onChange={(e) => setBulkPct(Number(e.target.value))} />
++            </label>
++          </div>
++          <div className="fmt-row">
++            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++              <button key={f} type="button" className={`fmt-btn${bulkFmt === f ? " on" : ""}`} onClick={() => setBulkFmt(f)}>
++                {FMT_LABEL[f]}
++              </button>
++            ))}
++          </div>
++          <BulkPanel
++            process={bulkProcess}
++            zipName="resized-images.zip"
++            suffix={`-${bulkPct}pct`}
++            hint="Each file scaled to the same percentage of its own original size, in parallel"
++          />
++        </>
++      ) : !srcUrl ? (
+         <div
+           className={`drop${over ? " over" : ""}`}
+           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+@@ -124,6 +183,19 @@ export default function ImageResizer() {
+             ))}
+           </div>
+ 
++          <div className="fmt-row">
++            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
++              <button
++                key={f}
++                type="button"
++                className={`fmt-btn${fmt === f ? " on" : ""}`}
++                onClick={() => { setFmt(f); setOut(null); }}
++              >
++                {FMT_LABEL[f]}
++              </button>
++            ))}
++          </div>
++
+           <div className="preview checker">
+             <img src={out?.url ?? srcUrl} alt="Preview" />
+           </div>
+diff --git a/lib/bulk.ts b/lib/bulk.ts
+new file mode 100644
+index 0000000..b46c75f
+--- /dev/null
++++ b/lib/bulk.ts
+@@ -0,0 +1,109 @@
++// Shared bulk-processing engine used by every tool's "Bulk mode".
++//
++// Design goals (this is the part that beats paid bulk tools like
++// TinyPNG/iLoveIMG's free tier):
++//  - No upload round trip per file — everything runs on-device, so there's
++//    no queueing on someone else's server and no per-file network latency.
++//  - True parallelism, not one-at-a-time: several images are processed at
++//    once, tuned to the device's core count instead of a fixed "2 at a time"
++//    limit like most free web tools impose.
++//  - No arbitrary file-count cap — the only ceiling is the browser's own
++//    memory, so a batch of 100 works the same as a batch of 5.
++//  - Nothing ever leaves the device, so there's no "files auto-deleted
++//    after 1 hour" privacy tradeoff to think about.
++
++export type QueueStatus = "queued" | "working" | "done" | "error";
++
++export interface QueueItem<R> {
++  id: string;
++  file: File;
++  status: QueueStatus;
++  result?: R;
++  error?: string;
++}
++
++export interface CancelToken {
++  cancelled: boolean;
++}
++
++/**
++ * Runs `worker` over `files` with at most `concurrency` in flight at once.
++ * Calls `onUpdate` after every state change so the UI can render progress
++ * incrementally instead of freezing until the whole batch finishes.
++ */
++export async function runQueue<R>(
++  files: File[],
++  worker: (file: File) => Promise<R>,
++  opts: {
++    concurrency: number;
++    onUpdate: (items: QueueItem<R>[]) => void;
++    signal?: CancelToken;
++  }
++): Promise<QueueItem<R>[]> {
++  const items: QueueItem<R>[] = files.map((file, i) => ({
++    id: `${i}-${file.name}-${file.size}-${file.lastModified}`,
++    file,
++    status: "queued",
++  }));
++  opts.onUpdate([...items]);
++
++  let next = 0;
++  const lanes = Math.max(1, Math.min(opts.concurrency, files.length));
++
++  async function lane() {
++    while (next < items.length) {
++      if (opts.signal?.cancelled) return;
++      const i = next++;
++      items[i].status = "working";
++      opts.onUpdate([...items]);
++      try {
++        items[i].result = await worker(items[i].file);
++        items[i].status = "done";
++      } catch (err) {
++        items[i].status = "error";
++        items[i].error = err instanceof Error ? err.message : "Could not process this file";
++      }
++      opts.onUpdate([...items]);
++    }
++  }
++
++  await Promise.all(Array.from({ length: lanes }, lane));
++  return items;
++}
++
++/**
++ * How many files to run in parallel. Light canvas work (resize/convert/
++ * compress) scales with CPU cores. Heavy WASM/ML work (background removal)
++ * is capped low — those tasks are already using every core internally, so
++ * running many at once just thrashes memory instead of finishing faster.
++ */
++export function idealConcurrency(heavy = false): number {
++  const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
++  return heavy ? Math.max(1, Math.min(2, cores)) : Math.max(2, Math.min(6, cores - 1));
++}
++
++export async function downloadZip(
++  entries: { name: string; blob: Blob }[],
++  zipName: string
++): Promise<void> {
++  const { default: JSZip } = await import("jszip");
++  const zip = new JSZip();
++  const used = new Set<string>();
++  for (const e of entries) {
++    // avoid silently overwriting same-named files inside the zip
++    let name = e.name;
++    let n = 1;
++    while (used.has(name)) {
++      name = e.name.replace(/(\.[^.]+)?$/, (ext) => `-${n++}${ext || ""}`);
++    }
++    used.add(name);
++    zip.file(name, e.blob);
++  }
++  const blob = await zip.generateAsync({ type: "blob" });
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement("a");
++  a.href = url;
++  a.download = zipName;
++  a.click();
++  URL.revokeObjectURL(url);
++}
+diff --git a/package-lock.json b/package-lock.json
+index 9419bac..697ad3f 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -9,6 +9,7 @@
+       "version": "0.1.0",
+       "dependencies": {
+         "@imgly/background-removal": "^1.7.0",
++        "jszip": "^3.10.1",
+         "next": "^16.2.12",
+         "react": "^19.2.0",
+         "react-dom": "^19.2.0"
+@@ -786,6 +787,12 @@
+       "integrity": "sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==",
+       "license": "MIT"
+     },
++    "node_modules/core-util-is": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz",
++      "integrity": "sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==",
++      "license": "MIT"
++    },
+     "node_modules/csstype": {
+       "version": "3.2.3",
+       "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+@@ -817,6 +824,18 @@
+       "license": "ISC",
+       "peer": true
+     },
++    "node_modules/immediate": {
++      "version": "3.0.6",
++      "resolved": "https://registry.npmjs.org/immediate/-/immediate-3.0.6.tgz",
++      "integrity": "sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==",
++      "license": "MIT"
++    },
++    "node_modules/inherits": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
++      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
++      "license": "ISC"
++    },
+     "node_modules/iota-array": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/iota-array/-/iota-array-1.0.0.tgz",
+@@ -829,6 +848,33 @@
+       "integrity": "sha512-NcdALwpXkTm5Zvvbk7owOUSvVvBKDgKP5/ewfXEznmQFfs4ZRmanOeKBTjRVjka3QFoN6XJ+9F3USqfHqTaU5w==",
+       "license": "MIT"
+     },
++    "node_modules/isarray": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
++      "integrity": "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==",
++      "license": "MIT"
++    },
++    "node_modules/jszip": {
++      "version": "3.10.1",
++      "resolved": "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
++      "integrity": "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==",
++      "license": "(MIT OR GPL-3.0-or-later)",
++      "dependencies": {
++        "lie": "~3.3.0",
++        "pako": "~1.0.2",
++        "readable-stream": "~2.3.6",
++        "setimmediate": "^1.0.5"
++      }
++    },
++    "node_modules/lie": {
++      "version": "3.3.0",
++      "resolved": "https://registry.npmjs.org/lie/-/lie-3.3.0.tgz",
++      "integrity": "sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==",
++      "license": "MIT",
++      "dependencies": {
++        "immediate": "~3.0.5"
++      }
++    },
+     "node_modules/lodash-es": {
+       "version": "4.18.1",
+       "resolved": "https://registry.npmjs.org/lodash-es/-/lodash-es-4.18.1.tgz",
+@@ -945,6 +991,12 @@
+         "protobufjs": "^7.2.4"
+       }
+     },
++    "node_modules/pako": {
++      "version": "1.0.11",
++      "resolved": "https://registry.npmjs.org/pako/-/pako-1.0.11.tgz",
++      "integrity": "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==",
++      "license": "(MIT AND Zlib)"
++    },
+     "node_modules/picocolors": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+@@ -986,6 +1038,12 @@
+         "node": "^10 || ^12 || >=14"
+       }
+     },
++    "node_modules/process-nextick-args": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz",
++      "integrity": "sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==",
++      "license": "MIT"
++    },
+     "node_modules/protobufjs": {
+       "version": "7.6.5",
+       "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.5.tgz",
+@@ -1031,6 +1089,27 @@
+         "react": "^19.2.8"
+       }
+     },
++    "node_modules/readable-stream": {
++      "version": "2.3.8",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.8.tgz",
++      "integrity": "sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==",
++      "license": "MIT",
++      "dependencies": {
++        "core-util-is": "~1.0.0",
++        "inherits": "~2.0.3",
++        "isarray": "~1.0.0",
++        "process-nextick-args": "~2.0.0",
++        "safe-buffer": "~5.1.1",
++        "string_decoder": "~1.1.1",
++        "util-deprecate": "~1.0.1"
++      }
++    },
++    "node_modules/safe-buffer": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
++      "integrity": "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==",
++      "license": "MIT"
++    },
+     "node_modules/scheduler": {
+       "version": "0.27.0",
+       "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz",
+@@ -1050,6 +1129,12 @@
+         "node": ">=10"
+       }
+     },
++    "node_modules/setimmediate": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/setimmediate/-/setimmediate-1.0.5.tgz",
++      "integrity": "sha512-MATJdZp8sLqDl/68LfQmbP8zKPLQNV6BIZoIgrscFDQ+RsvK/BxeDQOgyxKKoh0y/8h3BqVFnCqQ/gd+reiIXA==",
++      "license": "MIT"
++    },
+     "node_modules/sharp": {
+       "version": "0.34.5",
+       "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.34.5.tgz",
+@@ -1104,6 +1189,15 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/string_decoder": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
++      "integrity": "sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "~5.1.0"
++      }
++    },
+     "node_modules/styled-jsx": {
+       "version": "5.1.6",
+       "resolved": "https://registry.npmjs.org/styled-jsx/-/styled-jsx-5.1.6.tgz",
+@@ -1153,6 +1247,12 @@
+       "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+       "license": "MIT"
+     },
++    "node_modules/util-deprecate": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
++      "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==",
++      "license": "MIT"
++    },
+     "node_modules/zod": {
+       "version": "3.25.76",
+       "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+diff --git a/package.json b/package.json
+index 9ded1a7..13fcc4c 100644
+--- a/package.json
++++ b/package.json
+@@ -10,6 +10,7 @@
+   },
+   "dependencies": {
+     "@imgly/background-removal": "^1.7.0",
++    "jszip": "^3.10.1",
+     "next": "^16.2.12",
+     "react": "^19.2.0",
+     "react-dom": "^19.2.0"

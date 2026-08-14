@@ -20,11 +20,33 @@ const mono = Space_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://cutout.studio"),
   title: {
-    default: "Cutout Studio — free browser image tools",
+    default: "Cutout Studio — free, instant image tools in your browser",
     template: "%s · Cutout Studio",
   },
   description:
-    "Free image tools that run entirely in your browser. Nothing is uploaded to a server. Fast, private, unlimited.",
+    "Remove backgrounds, compress, convert, resize and crop images instantly — no upload, no wait, no signup. Runs entirely in your browser, export to PNG, JPG or WebP.",
+  keywords: [
+    "remove background online",
+    "compress image online",
+    "convert image format",
+    "resize image online",
+    "free image tools",
+    "no upload image editor",
+  ],
+  openGraph: {
+    type: "website",
+    siteName: "Cutout Studio",
+    title: "Cutout Studio — free, instant image tools in your browser",
+    description:
+      "Remove backgrounds, compress, convert, resize and crop images instantly — no upload, no wait, no signup.",
+    url: "https://cutout.studio",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Cutout Studio — free, instant image tools in your browser",
+    description:
+      "Remove backgrounds, compress, convert, resize and crop images instantly — no upload, no wait, no signup.",
+  },
 };
 
 export default function RootLayout({
@@ -34,6 +56,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* Warms the connection to the background-removal model CDN
+            before the user even opens that tool, so the one-time
+            model download starts faster instead of paying DNS/TLS
+            setup cost on top of the fetch. */}
+        <link rel="preconnect" href="https://staticimgly.com" crossOrigin="" />
+        <link rel="dns-prefetch" href="https://staticimgly.com" />
+      </head>
       <body className={`${display.variable} ${body.variable} ${mono.variable}`}>
         {children}
       </body>

@@ -1,16 +1,43 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-function prettyBytes(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt } from "@/lib/image";
+import BulkPanel, { type BulkResult } from "./BulkPanel";
 
 type Result = { url: string; blob: Blob; w: number; h: number };
 
+// Shared by both the single-file preview path and bulk mode so the two
+// never drift out of sync.
+function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+      const w = Math.round(image.naturalWidth * scale);
+      const h = Math.round(image.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      if (f === "image/jpeg") {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, w, h);
+      }
+      ctx.drawImage(image, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
+        else reject(new Error("Could not encode"));
+      }, f, q);
+    };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
+    image.src = url;
+  });
+}
+
 export default function ImageCompressor() {
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   const [over, setOver] = useState(false);
   const [srcUrl, setSrcUrl] = useState<string | null>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -18,6 +45,7 @@ export default function ImageCompressor() {
   const [origSize, setOrigSize] = useState(0);
   const [quality, setQuality] = useState(0.7);
   const [maxW, setMaxW] = useState(0); // 0 = keep original width
+  const [fmt, setFmt] = useState<Fmt>("image/jpeg");
   const [out, setOut] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,7 +58,7 @@ export default function ImageCompressor() {
   }, [srcUrl, out]);
 
   const compress = useCallback(
-    (image: HTMLImageElement, q: number, mw: number) => {
+    (image: HTMLImageElement, q: number, mw: number, f: Fmt) => {
       setBusy(true);
       const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
       const w = Math.round(image.naturalWidth * scale);
@@ -39,6 +67,12 @@ export default function ImageCompressor() {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d")!;
+      // PNG has no alpha loss to worry about, but JPG needs an opaque
+      // background or transparent pixels turn black.
+      if (f === "image/jpeg") {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, w, h);
+      }
       ctx.drawImage(image, 0, 0, w, h);
       canvas.toBlob(
         (blob) => {
@@ -50,7 +84,7 @@ export default function ImageCompressor() {
           }
           setBusy(false);
         },
-        "image/jpeg",
+        f,
         q
       );
     },
@@ -64,10 +98,12 @@ export default function ImageCompressor() {
       setSrcUrl(url);
       setName(file.name);
       setOrigSize(file.size);
+      const detected = outputFmt(file.type);
+      setFmt(detected);
       const image = new Image();
       image.onload = () => {
         setImg(image);
-        compress(image, quality, maxW);
+        compress(image, quality, maxW, detected);
       };
       image.src = url;
     },
@@ -76,9 +112,9 @@ export default function ImageCompressor() {
 
   // re-compress when settings change
   useEffect(() => {
-    if (img) compress(img, quality, maxW);
+    if (img) compress(img, quality, maxW, fmt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quality, maxW]);
+  }, [quality, maxW, fmt]);
 
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
@@ -95,15 +131,57 @@ export default function ImageCompressor() {
     if (!out) return;
     const a = document.createElement("a");
     a.href = out.url;
-    a.download = name.replace(/\.[^.]+$/, "") + "-compressed.jpg";
+    a.download = name.replace(/\.[^.]+$/, "") + "-compressed." + FMT_EXT[fmt];
     a.click();
   };
 
   const saved = out && origSize ? Math.max(0, Math.round((1 - out.blob.size / origSize) * 100)) : 0;
 
+  const bulkProcess = useCallback(
+    async (file: File): Promise<BulkResult> => {
+      const r = await compressFile(file, quality, maxW, fmt);
+      URL.revokeObjectURL(r.url); // bulk mode only needs the blob, not a preview URL
+      return { blob: r.blob, ext: FMT_EXT[fmt] };
+    },
+    [quality, maxW, fmt]
+  );
+
   return (
     <div className="tool">
-      {!img ? (
+      <div className="mode-row">
+        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
+        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+      </div>
+
+      {mode === "bulk" ? (
+        <>
+          <div className="controls">
+            {fmt !== "image/png" && (
+              <label className="ctrl">
+                <span>Quality: {Math.round(quality * 100)}%</span>
+                <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
+              </label>
+            )}
+            <label className="ctrl">
+              <span>Max width: {maxW ? `${maxW}px` : "original"}</span>
+              <input type="range" min={0} max={4000} step={100} value={maxW} onChange={(e) => setMaxW(Number(e.target.value))} />
+            </label>
+          </div>
+          <div className="fmt-row">
+            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
+              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
+                {FMT_LABEL[f]}
+              </button>
+            ))}
+          </div>
+          <BulkPanel
+            process={bulkProcess}
+            zipName="compressed-images.zip"
+            suffix="-compressed"
+            hint="Same quality, width and format settings applied to every file, in parallel"
+          />
+        </>
+      ) : !img ? (
         <div
           className={`drop${over ? " over" : ""}`}
           onDragOver={(e) => {
@@ -145,14 +223,24 @@ export default function ImageCompressor() {
           </div>
 
           <div className="controls">
-            <label className="ctrl">
-              <span>Quality: {Math.round(quality * 100)}%</span>
-              <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
-            </label>
+            {fmt !== "image/png" && (
+              <label className="ctrl">
+                <span>Quality: {Math.round(quality * 100)}%</span>
+                <input type="range" min={10} max={100} value={quality * 100} onChange={(e) => setQuality(Number(e.target.value) / 100)} />
+              </label>
+            )}
             <label className="ctrl">
               <span>Max width: {maxW ? `${maxW}px` : "original"}</span>
               <input type="range" min={0} max={4000} step={100} value={maxW} onChange={(e) => setMaxW(Number(e.target.value))} />
             </label>
+          </div>
+
+          <div className="fmt-row">
+            {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
+              <button key={f} type="button" className={`fmt-btn${fmt === f ? " on" : ""}`} onClick={() => setFmt(f)}>
+                {FMT_LABEL[f]}
+              </button>
+            ))}
           </div>
 
           {out && (
@@ -163,7 +251,7 @@ export default function ImageCompressor() {
 
           <div className="actions">
             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
-              {busy ? "Working…" : "Download JPG"}
+              {busy ? "Working…" : `Download ${FMT_LABEL[fmt]}`}
             </button>
             <button className="btn" type="button" onClick={reset}>New image</button>
           </div>

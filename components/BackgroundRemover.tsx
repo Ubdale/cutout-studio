@@ -6,6 +6,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { FMT_LABEL, FMT_EXT, type Fmt } from "@/lib/image";
+import BulkPanel, { type BulkResult } from "./BulkPanel";
 
 type Phase = "idle" | "working" | "done" | "error";
 
@@ -14,6 +16,16 @@ type Phase = "idle" | "working" | "done" | "error";
 // "isnet_quint8" for the smallest, fastest option on very low-end phones.
 const MODEL = "isnet_fp16" as const;
 
+async function removeBgFile(file: File): Promise<Blob> {
+  const { removeBackground } = await import("@imgly/background-removal");
+  const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
+  return removeBackground(file, {
+    model: MODEL,
+    device: useGpu ? "gpu" : "cpu",
+    output: { format: "image/png" },
+  });
+}
+
 function prettyBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -21,6 +33,7 @@ function prettyBytes(n: number) {
 }
 
 export default function BackgroundRemover() {
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   const [phase, setPhase] = useState<Phase>("idle");
   const [over, setOver] = useState(false);
   const [status, setStatus] = useState("");
@@ -29,6 +42,8 @@ export default function BackgroundRemover() {
 
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [cutoutUrl, setCutoutUrl] = useState<string | null>(null);
+  const [fmt, setFmt] = useState<Fmt>("image/png");
+  const [downloading, setDownloading] = useState(false);
   const [info, setInfo] = useState<{
     name: string;
     size: number;
@@ -77,6 +92,7 @@ export default function BackgroundRemover() {
     setError("");
     setStatus("");
     setPos(50);
+    setFmt("image/png");
     setPhase("idle");
     if (inputRef.current) inputRef.current.value = "";
   }, [originalUrl, cutoutUrl]);
@@ -151,22 +167,75 @@ export default function BackgroundRemover() {
     if (f) handleFile(f);
   };
 
-  const download = () => {
+  const download = useCallback(async () => {
     if (!cutoutBlob.current || !info) return;
-    const url = URL.createObjectURL(cutoutBlob.current);
-    const a = document.createElement("a");
     const base = info.name.replace(/\.[^.]+$/, "");
-    a.href = url;
-    a.download = `${base}-cutout.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+
+    // PNG keeps the alpha channel straight from the model's output — no
+    // re-encode needed, so this path stays instant.
+    if (fmt === "image/png") {
+      const url = URL.createObjectURL(cutoutBlob.current);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${base}-cutout.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    // JPG/WebP: composite onto a white canvas first since JPG has no
+    // transparency (and a transparent WebP export would look identical
+    // to the PNG, just heavier for photo-style output).
+    setDownloading(true);
+    try {
+      const bmp = await createImageBitmap(cutoutBlob.current);
+      const canvas = document.createElement("canvas");
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close?.();
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${base}-cutout.${FMT_EXT[fmt]}`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        setDownloading(false);
+      }, fmt, 0.92);
+    } catch {
+      setDownloading(false);
+    }
+  }, [fmt, info]);
 
   const aspect = info && info.w && info.h ? `${info.w} / ${info.h}` : "4 / 3";
 
+  const bulkProcess = useCallback(async (file: File): Promise<BulkResult> => {
+    const blob = await removeBgFile(file);
+    return { blob, ext: "png" };
+  }, []);
+
   return (
     <div className="tool">
-      {phase === "idle" && (
+      <div className="mode-row">
+        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
+        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+      </div>
+
+      {mode === "bulk" ? (
+        <BulkPanel
+          process={bulkProcess}
+          heavy
+          zipName="cutouts.zip"
+          suffix="-cutout"
+          hint="Runs 1-2 at a time — background removal is the heaviest tool here, so this keeps it stable instead of racing every core at once"
+        />
+      ) : phase === "idle" && (
         <div
           className={`drop${over ? " over" : ""}`}
           onDragOver={(e) => {
@@ -198,7 +267,7 @@ export default function BackgroundRemover() {
         </div>
       )}
 
-      {phase !== "idle" && (
+      {mode === "single" && phase !== "idle" && (
         <div className="stage">
           {info && (
             <div className="meta mono">
@@ -269,10 +338,26 @@ export default function BackgroundRemover() {
             </div>
           )}
 
+          {phase === "done" && (
+            <div className="fmt-row">
+              {(Object.keys(FMT_LABEL) as Fmt[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`fmt-btn${fmt === f ? " on" : ""}`}
+                  onClick={() => setFmt(f)}
+                  title={f === "image/png" ? "Keeps transparency" : "Adds a white background"}
+                >
+                  {FMT_LABEL[f]}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="actions">
             {phase === "done" && (
-              <button className="btn primary" type="button" onClick={download}>
-                Download PNG
+              <button className="btn primary" type="button" onClick={download} disabled={downloading}>
+                {downloading ? "Preparing…" : `Download ${FMT_LABEL[fmt]}`}
               </button>
             )}
             <button className="btn" type="button" onClick={reset}>

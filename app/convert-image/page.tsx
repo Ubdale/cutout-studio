@@ -3,9 +3,15 @@ import Link from "next/link";
 import ImageConverter from "@/components/ImageConverter";
 
 export const metadata: Metadata = {
-  title: "Convert image — PNG, JPG, WebP",
+  title: "Convert Image Format Online Free — JPG, PNG, WebP",
   description:
-    "Convert images between PNG, JPG and WebP for free. Runs entirely in your browser, nothing is uploaded. Fast, private, unlimited.",
+    "Convert images between JPG, PNG and WebP instantly in your browser — no upload, no signup. Fast, private, unlimited, one click to download.",
+  keywords: [
+    "convert image format",
+    "png to jpg converter",
+    "jpg to webp online",
+    "image format converter free",
+  ],
   alternates: { canonical: "/convert-image" },
 };
 
