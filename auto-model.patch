@@ -1,0 +1,66 @@
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index f1a4b1b..9230923 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -11,12 +11,21 @@ import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ type Phase = "idle" | "working" | "done" | "error";
+ 
+-// fp16: best quality, larger one-time model download (~85MB), still fast
+-// on GPU/multi-core CPU. quint8 (int8-quantized): ~40MB download and
+-// noticeably faster inference, at a small edge-detail quality cost —
+-// this is the "Fast mode" option below for older/low-core devices.
++// fp16: best quality, larger one-time model download (~85MB). quint8
++// (int8-quantized): ~40MB and noticeably faster to run, at a small
++// edge-detail quality cost. Rather than ask the user to pick, this picks
++// automatically from the device's core count — low-core devices get the
++// faster model (best quality would feel sluggish on CPU-only WASM there),
++// higher-core devices get the more accurate one since the extra compute
++// is barely noticeable. One model, chosen once, no user-facing toggle.
+ type ModelId = "isnet_fp16" | "isnet_quint8";
+ 
++function pickModel(): ModelId {
++  if (typeof navigator === "undefined") return "isnet_fp16";
++  const cores = navigator.hardwareConcurrency || 4;
++  return cores <= 4 ? "isnet_quint8" : "isnet_fp16";
++}
++
+ // WebGPU is disabled here on purpose. It failed three different ways in a
+ // row on this library version — "worker not ready", a WASM init race, then
+ // "Failed to initialize JSEP" — and none of those were fixable from our
+@@ -40,7 +49,7 @@ function prettyBytes(n: number) {
+ 
+ export default function BackgroundRemover() {
+   const [mode, setMode] = useState<"single" | "bulk">("single");
+-  const [model, setModel] = useState<ModelId>("isnet_fp16");
++  const [model] = useState<ModelId>(pickModel);
+   const [phase, setPhase] = useState<Phase>("idle");
+   const [over, setOver] = useState(false);
+   const [status, setStatus] = useState("");
+@@ -230,26 +239,6 @@ export default function BackgroundRemover() {
+         <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
+         <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+       </div>
+-      <div className="mode-row">
+-        <button
+-          type="button"
+-          className={`mode-btn${model === "isnet_fp16" ? " on" : ""}`}
+-          onClick={() => setModel("isnet_fp16")}
+-          disabled={phase === "working"}
+-          title="Best edge quality"
+-        >
+-          Best quality
+-        </button>
+-        <button
+-          type="button"
+-          className={`mode-btn${model === "isnet_quint8" ? " on" : ""}`}
+-          onClick={() => setModel("isnet_quint8")}
+-          disabled={phase === "working"}
+-          title="Smaller model, faster on low-end devices"
+-        >
+-          Fast mode
+-        </button>
+-      </div>
+ 
+       {mode === "bulk" ? (
+         <BulkPanel
