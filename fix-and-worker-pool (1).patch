@@ -1,0 +1,273 @@
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index 94da767..18fb4e8 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -23,9 +23,6 @@ async function removeBgFile(file: File, model: ModelId): Promise<Blob> {
+   return removeBackground(file, {
+     model,
+     device: useGpu ? "gpu" : "cpu",
+-    // Lets WebGPU inference run off the main thread instead of blocking
+-    // the UI while it works.
+-    proxyToWorker: true,
+     output: { format: "image/png" },
+   });
+ }
+@@ -136,7 +133,6 @@ export default function BackgroundRemover() {
+       const result = await removeBackground(file, {
+         model,
+         device: useGpu ? "gpu" : "cpu",
+-        proxyToWorker: true,
+         output: { format: "image/png" },
+         progress: (key: string, current: number, total: number) => {
+           if (key.startsWith("fetch")) {
+diff --git a/components/ImageCompressor.tsx b/components/ImageCompressor.tsx
+index b4aef85..5b128aa 100644
+--- a/components/ImageCompressor.tsx
++++ b/components/ImageCompressor.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt } from "@/lib/image";
++import { runCanvasTask } from "@/lib/workerPool";
+ import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ type Result = { url: string; blob: Blob; w: number; h: number };
+@@ -139,9 +140,12 @@ export default function ImageCompressor() {
+ 
+   const bulkProcess = useCallback(
+     async (file: File): Promise<BulkResult> => {
+-      const r = await compressFile(file, quality, maxW, fmt);
+-      URL.revokeObjectURL(r.url); // bulk mode only needs the blob, not a preview URL
+-      return { blob: r.blob, ext: FMT_EXT[fmt] };
++      const blob = await runCanvasTask(
++        file,
++        { kind: "compress", format: fmt, quality, maxW },
++        async () => (await compressFile(file, quality, maxW, fmt)).blob
++      );
++      return { blob, ext: FMT_EXT[fmt] };
+     },
+     [quality, maxW, fmt]
+   );
+diff --git a/components/ImageConverter.tsx b/components/ImageConverter.tsx
+index b175c36..485784a 100644
+--- a/components/ImageConverter.tsx
++++ b/components/ImageConverter.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { FMT_LABEL as LABEL, FMT_EXT as EXT, type Fmt } from "@/lib/image";
++import { runCanvasTask } from "@/lib/workerPool";
+ import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ function convertFile(file: File, f: Fmt): Promise<Blob> {
+@@ -105,7 +106,14 @@ export default function ImageConverter() {
+   };
+ 
+   const bulkProcess = useCallback(
+-    async (file: File): Promise<BulkResult> => ({ blob: await convertFile(file, fmt), ext: EXT[fmt] }),
++    async (file: File): Promise<BulkResult> => ({
++      blob: await runCanvasTask(
++        file,
++        { kind: "convert", format: fmt, quality: 0.92 },
++        () => convertFile(file, fmt)
++      ),
++      ext: EXT[fmt],
++    }),
+     [fmt]
+   );
+ 
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index 73a0105..ab1c8a8 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -5,6 +5,7 @@ import {
+   decode, sourceSize, release, canvasToBlob, triggerDownload,
+   baseName, prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt,
+ } from "@/lib/image";
++import { runCanvasTask } from "@/lib/workerPool";
+ import BulkPanel, { type BulkResult } from "./BulkPanel";
+ 
+ // Bulk mode resizes each file by the same percentage of its own original
+@@ -106,7 +107,11 @@ export default function ImageResizer() {
+ 
+   const bulkProcess = useCallback(
+     async (file: File): Promise<BulkResult> => ({
+-      blob: await resizeFileByPercent(file, bulkPct, bulkFmt),
++      blob: await runCanvasTask(
++        file,
++        { kind: "resize", format: bulkFmt, pct: bulkPct },
++        () => resizeFileByPercent(file, bulkPct, bulkFmt)
++      ),
+       ext: FMT_EXT[bulkFmt],
+     }),
+     [bulkPct, bulkFmt]
+diff --git a/lib/canvas-worker.ts b/lib/canvas-worker.ts
+new file mode 100644
+index 0000000..f17f499
+--- /dev/null
++++ b/lib/canvas-worker.ts
+@@ -0,0 +1,67 @@
++// This file runs inside a Worker, not on the main thread. Each worker in
++// the pool (see workerPool.ts) gets its own instance, so N workers really
++// do use N cores in parallel — unlike calling canvas.toBlob() N times on
++// the main thread, which only ever uses one core no matter how many
++// "concurrent" promises are in flight.
++
++export type CanvasTask =
++  | { kind: "convert"; format: string; quality: number }
++  | { kind: "compress"; format: string; quality: number; maxW: number }
++  | { kind: "resize"; format: string; pct: number };
++
++interface Req {
++  id: number;
++  file: File;
++  task: CanvasTask;
++}
++interface Res {
++  id: number;
++  ok: boolean;
++  blob?: Blob;
++  error?: string;
++}
++
++self.onmessage = async (e: MessageEvent<Req>) => {
++  const { id, file, task } = e.data;
++  try {
++    const bitmap = await createImageBitmap(file);
++    let w = bitmap.width;
++    let h = bitmap.height;
++    let format = "image/png";
++    let quality = 0.92;
++
++    if (task.kind === "compress") {
++      format = task.format;
++      quality = task.quality;
++      if (task.maxW && bitmap.width > task.maxW) {
++        const scale = task.maxW / bitmap.width;
++        w = Math.round(bitmap.width * scale);
++        h = Math.round(bitmap.height * scale);
++      }
++    } else if (task.kind === "resize") {
++      format = task.format;
++      w = Math.max(1, Math.round((bitmap.width * task.pct) / 100));
++      h = Math.max(1, Math.round((bitmap.height * task.pct) / 100));
++    } else {
++      format = task.format;
++    }
++
++    const canvas = new OffscreenCanvas(w, h);
++    const ctx = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
++    if (format === "image/jpeg") {
++      // JPEG has no alpha channel — transparent pixels would otherwise
++      // turn black instead of white.
++      ctx.fillStyle = "#fff";
++      ctx.fillRect(0, 0, w, h);
++    }
++    ctx.drawImage(bitmap, 0, 0, w, h);
++    bitmap.close();
++
++    const blob = await canvas.convertToBlob({ type: format, quality });
++    const res: Res = { id, ok: true, blob };
++    (self as unknown as { postMessage: (m: Res) => void }).postMessage(res);
++  } catch (err) {
++    const res: Res = { id, ok: false, error: err instanceof Error ? err.message : "Worker failed" };
++    (self as unknown as { postMessage: (m: Res) => void }).postMessage(res);
++  }
++};
+diff --git a/lib/workerPool.ts b/lib/workerPool.ts
+new file mode 100644
+index 0000000..1c90f93
+--- /dev/null
++++ b/lib/workerPool.ts
+@@ -0,0 +1,91 @@
++"use client";
++
++import type { CanvasTask } from "./canvas-worker";
++
++let supported: boolean | null = null;
++
++/** Feature-detects OffscreenCanvas + module Worker support once, and caches the result. */
++export function workersSupported(): boolean {
++  if (supported !== null) return supported;
++  supported =
++    typeof Worker !== "undefined" &&
++    typeof OffscreenCanvas !== "undefined";
++  return supported;
++}
++
++class CanvasWorkerPool {
++  private workers: Worker[] = [];
++  private next = 0;
++  private pending = new Map<number, { resolve: (b: Blob) => void; reject: (e: Error) => void }>();
++  private counter = 0;
++
++  constructor(size: number) {
++    for (let i = 0; i < size; i++) {
++      const w = new Worker(new URL("./canvas-worker.ts", import.meta.url), { type: "module" });
++      w.onmessage = (e: MessageEvent<{ id: number; ok: boolean; blob?: Blob; error?: string }>) => {
++        const { id, ok, blob, error } = e.data;
++        const p = this.pending.get(id);
++        if (!p) return;
++        this.pending.delete(id);
++        if (ok && blob) p.resolve(blob);
++        else p.reject(new Error(error || "Worker failed"));
++      };
++      this.workers.push(w);
++    }
++  }
++
++  run(file: File, task: CanvasTask): Promise<Blob> {
++    const id = this.counter++;
++    const worker = this.workers[this.next];
++    this.next = (this.next + 1) % this.workers.length;
++    return new Promise((resolve, reject) => {
++      this.pending.set(id, { resolve, reject });
++      worker.postMessage({ id, file, task });
++    });
++  }
++
++  terminate() {
++    this.workers.forEach((w) => w.terminate());
++    this.workers = [];
++    this.pending.clear();
++  }
++}
++
++let pool: CanvasWorkerPool | null = null;
++let poolSize = 0;
++
++/** Lazily creates (or resizes) a shared worker pool sized to the device's cores. */
++function getPool(size: number): CanvasWorkerPool {
++  if (!pool || poolSize !== size) {
++    pool?.terminate();
++    pool = new CanvasWorkerPool(size);
++    poolSize = size;
++  }
++  return pool;
++}
++
++export function idealWorkerCount(): number {
++  const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
++  // Leave one core free for the main/UI thread.
++  return Math.max(2, Math.min(6, cores - 1));
++}
++
++/**
++ * Runs a canvas task (compress/resize/convert) on a pooled worker so bulk
++ * batches use real separate cores. Falls back to the caller-supplied
++ * main-thread implementation on browsers without OffscreenCanvas
++ * (older Safari) so nothing breaks there.
++ */
++export async function runCanvasTask(
++  file: File,
++  task: CanvasTask,
++  fallback: () => Promise<Blob>
++): Promise<Blob> {
++  if (!workersSupported()) return fallback();
++  try {
++    const p = getPool(idealWorkerCount());
++    return await p.run(file, task);
++  } catch {
++    return fallback();
++  }
++}

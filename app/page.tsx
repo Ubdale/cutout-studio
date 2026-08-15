@@ -1,5 +1,5 @@
 import Link from "next/link";
-
+import { SpeedInsights } from "@vercel/speed-insights/next"
 const tools = [
   {
     href: "/remove-background",
