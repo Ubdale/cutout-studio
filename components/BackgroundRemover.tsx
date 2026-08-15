@@ -17,12 +17,17 @@ type Phase = "idle" | "working" | "done" | "error";
 // this is the "Fast mode" option below for older/low-core devices.
 type ModelId = "isnet_fp16" | "isnet_quint8";
 
+// WebGPU is disabled here on purpose. It failed three different ways in a
+// row on this library version — "worker not ready", a WASM init race, then
+// "Failed to initialize JSEP" — and none of those were fixable from our
+// side (they're inside the library/browser's WebGPU plumbing). CPU/WASM is
+// slower but has been reliable, and a working tool beats a faster broken
+// one. Revisit only after testing in a real browser, not just tsc.
 async function removeBgFile(file: File, model: ModelId): Promise<Blob> {
   const { removeBackground } = await import("@imgly/background-removal");
-  const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
   return removeBackground(file, {
     model,
-    device: useGpu ? "gpu" : "cpu",
+    device: "cpu",
     output: { format: "image/png" },
   });
 }
@@ -126,13 +131,10 @@ export default function BackgroundRemover() {
       // load the library only when needed (keeps the page light)
       const { removeBackground } = await import("@imgly/background-removal");
 
-      // WebGPU is dramatically faster where the browser supports it;
-      // fall back to CPU (WASM) everywhere else.
-      const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
-
+      // WebGPU disabled — see the comment on removeBgFile above.
       const result = await removeBackground(file, {
         model,
-        device: useGpu ? "gpu" : "cpu",
+        device: "cpu",
         output: { format: "image/png" },
         progress: (key: string, current: number, total: number) => {
           if (key.startsWith("fetch")) {

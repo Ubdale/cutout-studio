@@ -1,0 +1,79 @@
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index 18fb4e8..f1a4b1b 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -17,12 +17,17 @@ type Phase = "idle" | "working" | "done" | "error";
+ // this is the "Fast mode" option below for older/low-core devices.
+ type ModelId = "isnet_fp16" | "isnet_quint8";
+ 
++// WebGPU is disabled here on purpose. It failed three different ways in a
++// row on this library version — "worker not ready", a WASM init race, then
++// "Failed to initialize JSEP" — and none of those were fixable from our
++// side (they're inside the library/browser's WebGPU plumbing). CPU/WASM is
++// slower but has been reliable, and a working tool beats a faster broken
++// one. Revisit only after testing in a real browser, not just tsc.
+ async function removeBgFile(file: File, model: ModelId): Promise<Blob> {
+   const { removeBackground } = await import("@imgly/background-removal");
+-  const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
+   return removeBackground(file, {
+     model,
+-    device: useGpu ? "gpu" : "cpu",
++    device: "cpu",
+     output: { format: "image/png" },
+   });
+ }
+@@ -126,13 +131,10 @@ export default function BackgroundRemover() {
+       // load the library only when needed (keeps the page light)
+       const { removeBackground } = await import("@imgly/background-removal");
+ 
+-      // WebGPU is dramatically faster where the browser supports it;
+-      // fall back to CPU (WASM) everywhere else.
+-      const useGpu = typeof navigator !== "undefined" && "gpu" in navigator;
+-
++      // WebGPU disabled — see the comment on removeBgFile above.
+       const result = await removeBackground(file, {
+         model,
+-        device: useGpu ? "gpu" : "cpu",
++        device: "cpu",
+         output: { format: "image/png" },
+         progress: (key: string, current: number, total: number) => {
+           if (key.startsWith("fetch")) {
+diff --git a/next.config.ts b/next.config.ts
+index 81a9d12..1980651 100644
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -13,29 +13,11 @@ const nextConfig: NextConfig = {
+           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+         ],
+       },
+-      {
+-        // onnxruntime-web (the engine behind background removal) can only
+-        // use SharedArrayBuffer + multi-threaded WASM when the page is
+-        // "cross-origin isolated". Without these two headers it silently
+-        // falls back to single-threaded WASM even on a many-core machine —
+-        // this is the single biggest lever for cutting inference time.
+-        //
+-        // COEP is set to "credentialless" rather than the stricter
+-        // "require-corp": require-corp would also block any future
+-        // AdSense/third-party ad iframe on this page (most ad networks
+-        // don't send the CORP header it demands). "credentialless" still
+-        // unlocks crossOriginIsolated but degrades gracefully — unsupported
+-        // browsers (older Safari) just ignore it and the page keeps working
+-        // at normal (non-isolated) speed instead of breaking.
+-        //
+-        // Scoped to /remove-background only, so it can't affect ads or
+-        // embeds on any other page.
+-        source: "/remove-background",
+-        headers: [
+-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+-          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+-        ],
+-      },
++      // NOTE: Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy were
++      // added here to unlock multi-threaded WASM for background removal,
++      // but they broke onnxruntime-web's WebGPU (JSEP) backend entirely —
++      // "Failed to initialize JSEP" — on this library version. Reverted:
++      // a working tool beats a theoretically faster broken one.
+     ];
+   },
+ };
