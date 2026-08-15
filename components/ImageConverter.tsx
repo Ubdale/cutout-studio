@@ -19,7 +19,7 @@ function convertFile(file: File, f: Fmt): Promise<Blob> {
       }
       ctx.drawImage(image, 0, 0);
       URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.92);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.97);
     };
     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
     image.src = url;
@@ -64,7 +64,7 @@ export default function ImageConverter() {
         setBusy(false);
       },
       f,
-      0.92
+      0.97
     );
   }, []);
 

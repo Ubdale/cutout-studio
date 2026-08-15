@@ -22,7 +22,7 @@ function resizeFileByPercent(file: File, pct: number, f: Fmt): Promise<Blob> {
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(bmp, 0, 0, w, h);
       release(bmp);
-      canvasToBlob(canvas, f, 0.92).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
+      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
     }).catch(reject);
   });
 }
@@ -86,7 +86,7 @@ export default function ImageResizer() {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bmp.current, 0, 0, w, h);
-    const blob = await canvasToBlob(canvas, fmt, 0.92);
+    const blob = await canvasToBlob(canvas, fmt, 0.97);
     if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     setBusy(false);
   }, [w, h, fmt]);

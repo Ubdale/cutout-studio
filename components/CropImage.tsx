@@ -121,7 +121,7 @@ export default function CropImage() {
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
     const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
+    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
     if (blob) {
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);

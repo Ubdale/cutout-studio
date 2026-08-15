@@ -75,7 +75,7 @@ export function release(src: ImageBitmap | HTMLImageElement | null): void {
 export function canvasToBlob(
   canvas: HTMLCanvasElement,
   type: Fmt,
-  quality = 0.92
+  quality = 0.97
 ): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }

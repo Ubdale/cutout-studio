@@ -46,7 +46,7 @@ export default function MetadataRemover() {
     const ctx = canvas.getContext("2d")!;
     if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
     ctx.drawImage(bmp.current, 0, 0);
-    const blob = await canvasToBlob(canvas, fmt, 0.92);
+    const blob = await canvasToBlob(canvas, fmt, 0.97);
     if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     setBusy(false);
   }, [nat, fmt]);

@@ -1,0 +1,131 @@
+diff --git a/components/BackgroundRemover.tsx b/components/BackgroundRemover.tsx
+index 9230923..e94dc3a 100644
+--- a/components/BackgroundRemover.tsx
++++ b/components/BackgroundRemover.tsx
+@@ -220,7 +220,7 @@ export default function BackgroundRemover() {
+           URL.revokeObjectURL(url);
+         }
+         setDownloading(false);
+-      }, fmt, 0.92);
++      }, fmt, 0.97);
+     } catch {
+       setDownloading(false);
+     }
+diff --git a/components/CropImage.tsx b/components/CropImage.tsx
+index eb9e0ea..188001c 100644
+--- a/components/CropImage.tsx
++++ b/components/CropImage.tsx
+@@ -121,7 +121,7 @@ export default function CropImage() {
+     const ctx = canvas.getContext("2d")!;
+     ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+     const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
++    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+     if (blob) {
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
+diff --git a/components/ImageCompressor.tsx b/components/ImageCompressor.tsx
+index b4aef85..a6b1f44 100644
+--- a/components/ImageCompressor.tsx
++++ b/components/ImageCompressor.tsx
+@@ -20,6 +20,8 @@ function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result
+       canvas.width = w;
+       canvas.height = h;
+       const ctx = canvas.getContext("2d")!;
++      ctx.imageSmoothingEnabled = true;
++      ctx.imageSmoothingQuality = "high";
+       if (f === "image/jpeg") {
+         ctx.fillStyle = "#fff";
+         ctx.fillRect(0, 0, w, h);
+@@ -67,6 +69,8 @@ export default function ImageCompressor() {
+       canvas.width = w;
+       canvas.height = h;
+       const ctx = canvas.getContext("2d")!;
++      ctx.imageSmoothingEnabled = true;
++      ctx.imageSmoothingQuality = "high";
+       // PNG has no alpha loss to worry about, but JPG needs an opaque
+       // background or transparent pixels turn black.
+       if (f === "image/jpeg") {
+diff --git a/components/ImageConverter.tsx b/components/ImageConverter.tsx
+index b175c36..2274619 100644
+--- a/components/ImageConverter.tsx
++++ b/components/ImageConverter.tsx
+@@ -19,7 +19,7 @@ function convertFile(file: File, f: Fmt): Promise<Blob> {
+       }
+       ctx.drawImage(image, 0, 0);
+       URL.revokeObjectURL(url);
+-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.92);
++      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.97);
+     };
+     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
+     image.src = url;
+@@ -64,7 +64,7 @@ export default function ImageConverter() {
+         setBusy(false);
+       },
+       f,
+-      0.92
++      0.97
+     );
+   }, []);
+ 
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+index df1735f..48c19f7 100644
+--- a/components/MetadataRemover.tsx
++++ b/components/MetadataRemover.tsx
+@@ -46,7 +46,7 @@ export default function MetadataRemover() {
+     const ctx = canvas.getContext("2d")!;
+     if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+     ctx.drawImage(bmp.current, 0, 0);
+-    const blob = await canvasToBlob(canvas, fmt, 0.92);
++    const blob = await canvasToBlob(canvas, fmt, 0.97);
+     if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     setBusy(false);
+   }, [nat, fmt]);
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index 73a0105..1585acd 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -22,7 +22,7 @@ function resizeFileByPercent(file: File, pct: number, f: Fmt): Promise<Blob> {
+       ctx.imageSmoothingQuality = "high";
+       ctx.drawImage(bmp, 0, 0, w, h);
+       release(bmp);
+-      canvasToBlob(canvas, f, 0.92).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
++      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
+     }).catch(reject);
+   });
+ }
+@@ -86,7 +86,7 @@ export default function ImageResizer() {
+     const ctx = canvas.getContext("2d")!;
+     ctx.imageSmoothingQuality = "high";
+     ctx.drawImage(bmp.current, 0, 0, w, h);
+-    const blob = await canvasToBlob(canvas, fmt, 0.92);
++    const blob = await canvasToBlob(canvas, fmt, 0.97);
+     if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     setBusy(false);
+   }, [w, h, fmt]);
+diff --git a/components/RotateImage.tsx b/components/RotateImage.tsx
+index ae40456..03a20c5 100644
+--- a/components/RotateImage.tsx
++++ b/components/RotateImage.tsx
+@@ -51,7 +51,7 @@ export default function ImageRotator() {
+     ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
+     ctx.restore();
+     const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
++    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+     if (blob) {
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
+diff --git a/lib/image.ts b/lib/image.ts
+index fdf8c1e..5f0ae13 100644
+--- a/lib/image.ts
++++ b/lib/image.ts
+@@ -75,7 +75,7 @@ export function release(src: ImageBitmap | HTMLImageElement | null): void {
+ export function canvasToBlob(
+   canvas: HTMLCanvasElement,
+   type: Fmt,
+-  quality = 0.92
++  quality = 0.97
+ ): Promise<Blob | null> {
+   return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+ }

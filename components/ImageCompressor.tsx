@@ -20,6 +20,8 @@ function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       if (f === "image/jpeg") {
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, w, h);
@@ -67,6 +69,8 @@ export default function ImageCompressor() {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       // PNG has no alpha loss to worry about, but JPG needs an opaque
       // background or transparent pixels turn black.
       if (f === "image/jpeg") {

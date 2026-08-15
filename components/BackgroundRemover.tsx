@@ -220,7 +220,7 @@ export default function BackgroundRemover() {
           URL.revokeObjectURL(url);
         }
         setDownloading(false);
-      }, fmt, 0.92);
+      }, fmt, 0.97);
     } catch {
       setDownloading(false);
     }

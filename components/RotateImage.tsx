@@ -51,7 +51,7 @@ export default function ImageRotator() {
     ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
     ctx.restore();
     const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.92);
+    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
     if (blob) {
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
