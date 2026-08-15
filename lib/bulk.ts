@@ -73,13 +73,20 @@ export async function runQueue<R>(
 
 /**
  * How many files to run in parallel. Light canvas work (resize/convert/
- * compress) scales with CPU cores. Heavy WASM/ML work (background removal)
- * is capped low — those tasks are already using every core internally, so
- * running many at once just thrashes memory instead of finishing faster.
+ * compress) scales with CPU cores — those run on independent Worker
+ * instances, so real parallelism is safe.
+ *
+ * Heavy WASM/ML work (background removal) is forced to exactly 1: the
+ * underlying onnxruntime-web engine is a singleton that initializes once
+ * per page. Two files starting at the same moment both trigger that
+ * init concurrently, which throws "multiple calls to initWasm() detected"
+ * and fails the whole batch — so this task type can't safely run more
+ * than one at a time no matter how many cores are available.
  */
 export function idealConcurrency(heavy = false): number {
+  if (heavy) return 1;
   const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
-  return heavy ? Math.max(1, Math.min(2, cores)) : Math.max(2, Math.min(6, cores - 1));
+  return Math.max(2, Math.min(6, cores - 1));
 }
 
 export async function downloadZip(

@@ -23,9 +23,6 @@ async function removeBgFile(file: File, model: ModelId): Promise<Blob> {
   return removeBackground(file, {
     model,
     device: useGpu ? "gpu" : "cpu",
-    // Lets WebGPU inference run off the main thread instead of blocking
-    // the UI while it works.
-    proxyToWorker: true,
     output: { format: "image/png" },
   });
 }
@@ -136,7 +133,6 @@ export default function BackgroundRemover() {
       const result = await removeBackground(file, {
         model,
         device: useGpu ? "gpu" : "cpu",
-        proxyToWorker: true,
         output: { format: "image/png" },
         progress: (key: string, current: number, total: number) => {
           if (key.startsWith("fetch")) {
