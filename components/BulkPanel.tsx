@@ -15,6 +15,9 @@ export default function BulkPanel({
   zipName = "images.zip",
   hint,
   suffix = "",
+  accept = "image/*",
+  filter,
+  label = "images",
 }: {
   /** Converts one input file to one output blob, using the tool's current settings. */
   process: (file: File) => Promise<BulkResult>;
@@ -24,7 +27,14 @@ export default function BulkPanel({
   hint?: string;
   /** appended before the extension, e.g. "-compressed" */
   suffix?: string;
+  /** file input's accept attribute — narrows the OS file picker */
+  accept?: string;
+  /** which dropped/selected files to actually process; defaults to images only */
+  filter?: (file: File) => boolean;
+  /** noun used in the default drop-zone copy, e.g. "spreadsheets" */
+  label?: string;
 }) {
+  const matches = filter ?? ((f: File) => f.type.startsWith("image/"));
   const [items, setItems] = useState<QueueItem<BulkResult>[]>([]);
   const [running, setRunning] = useState(false);
   const [over, setOver] = useState(false);
@@ -35,11 +45,11 @@ export default function BulkPanel({
     file.name.replace(/\.[^.]+$/, "") + suffix + "." + ext;
 
   const start = async (files: File[]) => {
-    const imgFiles = files.filter((f) => f.type.startsWith("image/"));
-    if (!imgFiles.length) return;
+    const matched = files.filter(matches);
+    if (!matched.length) return;
     cancelRef.current = { cancelled: false };
     setRunning(true);
-    await runQueue(imgFiles, process, {
+    await runQueue(matched, process, {
       concurrency: idealConcurrency(heavy),
       onUpdate: setItems,
       signal: cancelRef.current,
@@ -93,14 +103,14 @@ export default function BulkPanel({
           onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
         >
           <div className="drop-mark checker" />
-          <h2 className="display">Drop multiple images to batch process</h2>
+          <h2 className="display">Drop multiple {label} to batch process</h2>
           <p>{hint || "Same settings applied to every file, in parallel · no upload, no file limit"}</p>
-          <button className="pick" type="button">Choose images</button>
+          <button className="pick" type="button">Choose {label}</button>
           <input
             ref={inputRef}
             className="hidden-input"
             type="file"
-            accept="image/*"
+            accept={accept}
             multiple
             onChange={(e) => start(Array.from(e.target.files ?? []))}
           />

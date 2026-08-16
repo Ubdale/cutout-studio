@@ -11,6 +11,7 @@ const TOOLS = [
   "circle-crop",
   "rotate-image",
   "remove-metadata",
+  "convert-file",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

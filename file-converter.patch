@@ -1,0 +1,425 @@
+diff --git a/app/convert-file/page.tsx b/app/convert-file/page.tsx
+new file mode 100644
+index 0000000..59f4f5e
+--- /dev/null
++++ b/app/convert-file/page.tsx
+@@ -0,0 +1,46 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import FileConverter from "@/components/FileConverter";
++
++export const metadata: Metadata = {
++  title: "Convert Excel, CSV & JSON Online Free — No Upload",
++  description:
++    "Convert between Excel (.xlsx), CSV and JSON instantly in your browser — no upload, no signup. Accurate spreadsheet conversion, single file or bulk.",
++  keywords: [
++    "convert excel to csv",
++    "csv to json converter",
++    "json to excel",
++    "xlsx converter online free",
++    "spreadsheet converter",
++  ],
++  alternates: { canonical: "/convert-file" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">File converter</p>
++        <h1 className="display">Convert Excel, CSV and JSON.<br />Nothing leaves your device.</h1>
++        <p className="lead">
++          Accurate spreadsheet conversion powered by SheetJS — the same engine real
++          companies use. Single file or bulk. No sign-up, no upload.
++        </p>
++      </section>
++      <section className="wrap tool-slot">
++        <FileConverter />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/app/page.tsx b/app/page.tsx
+index df8f361..d4bc428 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -57,6 +57,13 @@ const tools = [
+     pill: "Live",
+     live: true,
+   },
++  {
++    href: "/convert-file",
++    title: "Convert Excel, CSV, JSON",
++    desc: "Accurate spreadsheet conversion between .xlsx, .csv and .json.",
++    pill: "Live",
++    live: true,
++  },
+ ];
+ 
+ export default function Home() {
+diff --git a/app/sitemap.ts b/app/sitemap.ts
+index 6a95e0f..d2e0c86 100644
+--- a/app/sitemap.ts
++++ b/app/sitemap.ts
+@@ -11,6 +11,7 @@ const TOOLS = [
+   "circle-crop",
+   "rotate-image",
+   "remove-metadata",
++  "convert-file",
+ ];
+ 
+ export default function sitemap(): MetadataRoute.Sitemap {
+diff --git a/components/BulkPanel.tsx b/components/BulkPanel.tsx
+index 48c76c4..12173f1 100644
+--- a/components/BulkPanel.tsx
++++ b/components/BulkPanel.tsx
+@@ -15,6 +15,9 @@ export default function BulkPanel({
+   zipName = "images.zip",
+   hint,
+   suffix = "",
++  accept = "image/*",
++  filter,
++  label = "images",
+ }: {
+   /** Converts one input file to one output blob, using the tool's current settings. */
+   process: (file: File) => Promise<BulkResult>;
+@@ -24,7 +27,14 @@ export default function BulkPanel({
+   hint?: string;
+   /** appended before the extension, e.g. "-compressed" */
+   suffix?: string;
++  /** file input's accept attribute — narrows the OS file picker */
++  accept?: string;
++  /** which dropped/selected files to actually process; defaults to images only */
++  filter?: (file: File) => boolean;
++  /** noun used in the default drop-zone copy, e.g. "spreadsheets" */
++  label?: string;
+ }) {
++  const matches = filter ?? ((f: File) => f.type.startsWith("image/"));
+   const [items, setItems] = useState<QueueItem<BulkResult>[]>([]);
+   const [running, setRunning] = useState(false);
+   const [over, setOver] = useState(false);
+@@ -35,11 +45,11 @@ export default function BulkPanel({
+     file.name.replace(/\.[^.]+$/, "") + suffix + "." + ext;
+ 
+   const start = async (files: File[]) => {
+-    const imgFiles = files.filter((f) => f.type.startsWith("image/"));
+-    if (!imgFiles.length) return;
++    const matched = files.filter(matches);
++    if (!matched.length) return;
+     cancelRef.current = { cancelled: false };
+     setRunning(true);
+-    await runQueue(imgFiles, process, {
++    await runQueue(matched, process, {
+       concurrency: idealConcurrency(heavy),
+       onUpdate: setItems,
+       signal: cancelRef.current,
+@@ -93,14 +103,14 @@ export default function BulkPanel({
+           onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
+         >
+           <div className="drop-mark checker" />
+-          <h2 className="display">Drop multiple images to batch process</h2>
++          <h2 className="display">Drop multiple {label} to batch process</h2>
+           <p>{hint || "Same settings applied to every file, in parallel · no upload, no file limit"}</p>
+-          <button className="pick" type="button">Choose images</button>
++          <button className="pick" type="button">Choose {label}</button>
+           <input
+             ref={inputRef}
+             className="hidden-input"
+             type="file"
+-            accept="image/*"
++            accept={accept}
+             multiple
+             onChange={(e) => start(Array.from(e.target.files ?? []))}
+           />
+diff --git a/components/FileConverter.tsx b/components/FileConverter.tsx
+new file mode 100644
+index 0000000..d7dc4c3
+--- /dev/null
++++ b/components/FileConverter.tsx
+@@ -0,0 +1,261 @@
++"use client";
++
++import { useCallback, useRef, useState } from "react";
++import * as XLSX from "xlsx";
++import { prettyBytes } from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
++
++export type SheetFmt = "xlsx" | "csv" | "json";
++
++const FMT_LABEL: Record<SheetFmt, string> = { xlsx: "Excel (.xlsx)", csv: "CSV", json: "JSON" };
++const FMT_EXT: Record<SheetFmt, string> = { xlsx: "xlsx", csv: "csv", json: "json" };
++const FMT_MIME: Record<SheetFmt, string> = {
++  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++  csv: "text/csv",
++  json: "application/json",
++};
++
++function extOf(name: string): string {
++  return (name.split(".").pop() || "").toLowerCase();
++}
++
++/**
++ * Reads any supported input (xlsx/xls/csv/json) into a SheetJS workbook.
++ * cellDates:true keeps dates as real dates instead of Excel's serial-number
++ * encoding, so CSV/JSON output shows an actual date, not a number like 45123.
++ */
++async function fileToWorkbook(file: File): Promise<XLSX.WorkBook> {
++  const ext = extOf(file.name);
++
++  if (ext === "json") {
++    const text = await file.text();
++    const data = JSON.parse(text);
++    const rows = Array.isArray(data) ? data : [data];
++    const ws = XLSX.utils.json_to_sheet(rows);
++    const wb = XLSX.utils.book_new();
++    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
++    return wb;
++  }
++
++  if (ext === "csv") {
++    const text = await file.text();
++    return XLSX.read(text, { type: "string", cellDates: true });
++  }
++
++  // xlsx, xls, ods, and anything else SheetJS can sniff
++  const buf = await file.arrayBuffer();
++  return XLSX.read(buf, { type: "array", cellDates: true });
++}
++
++/**
++ * Writes a workbook to the requested format. CSV/JSON can only hold one
++ * sheet — if the source had more than one, only the first is exported and
++ * the caller is told so (surfaced in the UI as a warning, not silently).
++ */
++function workbookToBlob(wb: XLSX.WorkBook, fmt: SheetFmt): { blob: Blob; multiSheetDropped: boolean } {
++  const multiSheetDropped = fmt !== "xlsx" && wb.SheetNames.length > 1;
++
++  if (fmt === "xlsx") {
++    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
++    return { blob: new Blob([out], { type: FMT_MIME.xlsx }), multiSheetDropped };
++  }
++
++  const ws = wb.Sheets[wb.SheetNames[0]];
++
++  if (fmt === "csv") {
++    const csv = XLSX.utils.sheet_to_csv(ws);
++    return { blob: new Blob([csv], { type: FMT_MIME.csv }), multiSheetDropped };
++  }
++
++  // json
++  const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
++  const json = JSON.stringify(rows, null, 2);
++  return { blob: new Blob([json], { type: FMT_MIME.json }), multiSheetDropped };
++}
++
++async function convertFile(file: File, fmt: SheetFmt): Promise<{ blob: Blob; multiSheetDropped: boolean; sheets: number; rows: number }> {
++  const wb = await fileToWorkbook(file);
++  const { blob, multiSheetDropped } = workbookToBlob(wb, fmt);
++  const firstSheet = wb.Sheets[wb.SheetNames[0]];
++  const range = firstSheet["!ref"] ? XLSX.utils.decode_range(firstSheet["!ref"]) : null;
++  const rows = range ? range.e.r - range.s.r : 0;
++  return { blob, multiSheetDropped, sheets: wb.SheetNames.length, rows };
++}
++
++const ACCEPT = ".xlsx,.xls,.csv,.json,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,application/json";
++
++function isSupported(file: File): boolean {
++  return ["xlsx", "xls", "csv", "json"].includes(extOf(file.name));
++}
++
++export default function FileConverter() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
++  const [fmt, setFmt] = useState<SheetFmt>("xlsx");
++  const [name, setName] = useState("");
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
++  const [warning, setWarning] = useState("");
++  const [out, setOut] = useState<{ url: string; blob: Blob; sheets: number; rows: number } | null>(null);
++  const [over, setOver] = useState(false);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  const handleFile = useCallback(
++    async (file: File) => {
++      if (!isSupported(file)) {
++        setError("That file type isn't supported. Use .xlsx, .xls, .csv or .json.");
++        return;
++      }
++      setError("");
++      setWarning("");
++      setBusy(true);
++      setName(file.name);
++      try {
++        const { blob, multiSheetDropped, sheets, rows } = await convertFile(file, fmt);
++        setOut((prev) => {
++          if (prev) URL.revokeObjectURL(prev.url);
++          return { url: URL.createObjectURL(blob), blob, sheets, rows };
++        });
++        if (multiSheetDropped) {
++          setWarning(
++            `This file has ${sheets} sheets — ${FMT_LABEL[fmt]} can only hold one, so only the first sheet was exported.`
++          );
++        }
++      } catch (err) {
++        setError(err instanceof Error ? `Could not convert this file: ${err.message}` : "Could not convert this file.");
++        setOut(null);
++      } finally {
++        setBusy(false);
++      }
++    },
++    [fmt]
++  );
++
++  const onInput = (e: React.ChangeEvent<HTMLInputElement>) => {
++    const f = e.target.files?.[0];
++    if (f) handleFile(f);
++  };
++  const onDrop = (e: React.DragEvent) => {
++    e.preventDefault();
++    setOver(false);
++    const f = e.dataTransfer.files?.[0];
++    if (f) handleFile(f);
++  };
++
++  const download = () => {
++    if (!out) return;
++    const a = document.createElement("a");
++    a.href = out.url;
++    a.download = name.replace(/\.[^.]+$/, "") + "." + FMT_EXT[fmt];
++    a.click();
++  };
++
++  const reset = () => {
++    if (out) URL.revokeObjectURL(out.url);
++    setOut(null);
++    setName("");
++    setError("");
++    setWarning("");
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  const bulkProcess = useCallback(
++    async (file: File): Promise<BulkResult> => {
++      const { blob } = await convertFile(file, fmt);
++      return { blob, ext: FMT_EXT[fmt] };
++    },
++    [fmt]
++  );
++
++  return (
++    <div className="tool">
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single file</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      <div className="fmt-row">
++        {(Object.keys(FMT_LABEL) as SheetFmt[]).map((f) => (
++          <button
++            key={f}
++            type="button"
++            className={`fmt-btn${fmt === f ? " on" : ""}`}
++            onClick={() => { setFmt(f); if (mode === "single" && name) reset(); }}
++          >
++            To {FMT_LABEL[f]}
++          </button>
++        ))}
++      </div>
++
++      {mode === "bulk" ? (
++        <BulkPanel
++          process={bulkProcess}
++          zipName={`converted-${fmt}.zip`}
++          accept={ACCEPT}
++          filter={isSupported}
++          label="spreadsheets"
++          hint={`Every file converted to ${FMT_LABEL[fmt]} · .xlsx, .xls, .csv and .json accepted`}
++        />
++      ) : !name ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={onDrop}
++          onClick={() => inputRef.current?.click()}
++          role="button"
++          tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop a spreadsheet to convert it</h2>
++          <p>.xlsx, .xls, .csv or .json · it never leaves your browser</p>
++          <button className="pick" type="button">Choose file</button>
++          <input
++            ref={inputRef}
++            className="hidden-input"
++            type="file"
++            accept={ACCEPT}
++            onChange={onInput}
++          />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span>
++            {out && (
++              <>
++                <span className="dot" />
++                <span>{out.sheets} sheet{out.sheets === 1 ? "" : "s"}</span>
++                <span className="dot" />
++                <span>{out.rows} rows</span>
++                <span className="dot" />
++                <span>{prettyBytes(out.blob.size)}</span>
++              </>
++            )}
++          </div>
++
++          {error && <div className="error">{error}</div>}
++          {warning && !error && <div className="error">{warning}</div>}
++
++          {busy && (
++            <div className="status">
++              <span className="spinner" />
++              <span>Converting…</span>
++            </div>
++          )}
++
++          <div className="actions">
++            {out && !busy && (
++              <button className="btn primary" type="button" onClick={download}>
++                Download {FMT_LABEL[fmt]}
++              </button>
++            )}
++            <button className="btn" type="button" onClick={reset}>
++              {error ? "Try again" : "New file"}
++            </button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/package.json b/package.json
+index b253efc..c4a12b4 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,8 @@
+     "jszip": "^3.10.1",
+     "next": "^16.2.12",
+     "react": "^19.2.0",
+-    "react-dom": "^19.2.0"
++    "react-dom": "^19.2.0",
++    "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
+   },
+   "devDependencies": {
+     "@types/node": "^22.10.0",

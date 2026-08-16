@@ -57,6 +57,13 @@ const tools = [
     pill: "Live",
     live: true,
   },
+  {
+    href: "/convert-file",
+    title: "Convert Excel, CSV, JSON",
+    desc: "Accurate spreadsheet conversion between .xlsx, .csv and .json.",
+    pill: "Live",
+    live: true,
+  },
 ];
 
 export default function Home() {
