@@ -1,0 +1,1220 @@
+diff --git a/app/globals.css b/app/globals.css
+index 664826e..791537c 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -707,6 +707,24 @@ button {
+   border-radius: 10px;
+   background: var(--surface);
+ }
++.bulk-thumb {
++  width: 36px;
++  height: 36px;
++  border-radius: 8px;
++  object-fit: cover;
++  flex-shrink: 0;
++  background: var(--paper);
++  border: 1px solid var(--line);
++}
++.bulk-thumb-ext {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  font-size: 10px;
++  font-weight: 700;
++  color: var(--muted);
++  letter-spacing: 0.02em;
++}
+ .bulk-row.error {
+   border-color: #d94f4f;
+ }
+diff --git a/app/page.tsx b/app/page.tsx
+index d4bc428..6dd3c45 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -64,6 +64,13 @@ const tools = [
+     pill: "Live",
+     live: true,
+   },
++  {
++    href: "/watermark",
++    title: "Watermark",
++    desc: "Stamp a text watermark — single or tiled — on your photos.",
++    pill: "Live",
++    live: true,
++  },
+ ];
+ 
+ export default function Home() {
+diff --git a/app/sitemap.ts b/app/sitemap.ts
+index d2e0c86..fd40572 100644
+--- a/app/sitemap.ts
++++ b/app/sitemap.ts
+@@ -12,6 +12,7 @@ const TOOLS = [
+   "rotate-image",
+   "remove-metadata",
+   "convert-file",
++  "watermark",
+ ];
+ 
+ export default function sitemap(): MetadataRoute.Sitemap {
+diff --git a/app/watermark/page.tsx b/app/watermark/page.tsx
+new file mode 100644
+index 0000000..9eb557e
+--- /dev/null
++++ b/app/watermark/page.tsx
+@@ -0,0 +1,45 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import Watermark from "@/components/Watermark";
++
++export const metadata: Metadata = {
++  title: "Add Watermark to Image Online Free — No Upload",
++  description:
++    "Stamp a text watermark onto your photos instantly in your browser — single or tiled, custom size/color/opacity. No upload, no signup, single or bulk.",
++  keywords: [
++    "add watermark to photo online",
++    "free watermark maker",
++    "watermark image online",
++    "bulk watermark images",
++  ],
++  alternates: { canonical: "/watermark" },
++};
++
++export default function Page() {
++  return (
++    <main>
++      <header className="wrap topbar">
++        <Link href="/" className="brand">
++          <span className="brand-mark checker" />
++          <span className="display brand-name">Cutout Studio</span>
++        </Link>
++        <span className="badge mono">100% in your browser</span>
++      </header>
++      <section className="wrap hero">
++        <p className="eyebrow mono">Watermark</p>
++        <h1 className="display">Stamp your photos.<br />Nothing leaves your device.</h1>
++        <p className="lead">
++          Add a text watermark — single mark or repeating tile — with full control over
++          size, color, opacity and position. Single image or bulk.
++        </p>
++      </section>
++      <section className="wrap tool-slot">
++        <Watermark />
++      </section>
++      <footer className="wrap foot">
++        <span className="mono">Cutout Studio · runs on your device</span>
++        <Link href="/">More tools</Link>
++      </footer>
++    </main>
++  );
++}
+diff --git a/components/BulkPanel.tsx b/components/BulkPanel.tsx
+index 12173f1..291fa7e 100644
+--- a/components/BulkPanel.tsx
++++ b/components/BulkPanel.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useRef, useState } from "react";
++import { useEffect, useRef, useState } from "react";
+ import { prettyBytes } from "@/lib/image";
+ import { runQueue, downloadZip, idealConcurrency, type QueueItem, type CancelToken } from "@/lib/bulk";
+ 
+@@ -9,6 +9,10 @@ export interface BulkResult {
+   ext: string;
+ }
+ 
++function extOf(name: string): string {
++  return (name.split(".").pop() || "").slice(0, 4).toUpperCase();
++}
++
+ export default function BulkPanel({
+   process,
+   heavy = false,
+@@ -36,14 +40,46 @@ export default function BulkPanel({
+ }) {
+   const matches = filter ?? ((f: File) => f.type.startsWith("image/"));
+   const [items, setItems] = useState<QueueItem<BulkResult>[]>([]);
++  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+   const [running, setRunning] = useState(false);
+   const [over, setOver] = useState(false);
+   const cancelRef = useRef<CancelToken>({ cancelled: false });
+   const inputRef = useRef<HTMLInputElement>(null);
++  const thumbsRef = useRef<Record<string, string>>({});
++
++  // keep a ref mirror so unmount cleanup doesn't need thumbs in deps
++  useEffect(() => {
++    thumbsRef.current = thumbs;
++  }, [thumbs]);
++  useEffect(() => {
++    return () => {
++      Object.values(thumbsRef.current).forEach((u) => URL.revokeObjectURL(u));
++    };
++  }, []);
+ 
+   const outName = (file: File, ext: string) =>
+     file.name.replace(/\.[^.]+$/, "") + suffix + "." + ext;
+ 
++  // Runs on every queue progress tick. Only generates a thumbnail the
++  // first time an item is seen — object URLs are relatively cheap, but
++  // there's no reason to ever make two for the same file. Non-image
++  // files (spreadsheets, etc.) never get one — they show an extension
++  // badge instead.
++  const handleUpdate = (newItems: QueueItem<BulkResult>[]) => {
++    setItems(newItems);
++    setThumbs((prev) => {
++      let changed = false;
++      const next = { ...prev };
++      for (const it of newItems) {
++        if (!(it.id in next) && it.file.type.startsWith("image/")) {
++          next[it.id] = URL.createObjectURL(it.file);
++          changed = true;
++        }
++      }
++      return changed ? next : prev;
++    });
++  };
++
+   const start = async (files: File[]) => {
+     const matched = files.filter(matches);
+     if (!matched.length) return;
+@@ -51,7 +87,7 @@ export default function BulkPanel({
+     setRunning(true);
+     await runQueue(matched, process, {
+       concurrency: idealConcurrency(heavy),
+-      onUpdate: setItems,
++      onUpdate: handleUpdate,
+       signal: cancelRef.current,
+     });
+     setRunning(false);
+@@ -85,6 +121,8 @@ export default function BulkPanel({
+   };
+ 
+   const clear = () => {
++    Object.values(thumbs).forEach((u) => URL.revokeObjectURL(u));
++    setThumbs({});
+     setItems([]);
+     if (inputRef.current) inputRef.current.value = "";
+   };
+@@ -132,6 +170,12 @@ export default function BulkPanel({
+           <div className="bulk-list">
+             {items.map((it) => (
+               <div key={it.id} className={`bulk-row ${it.status}`}>
++                {thumbs[it.id] ? (
++                  // eslint-disable-next-line @next/next/no-img-element
++                  <img className="bulk-thumb" src={thumbs[it.id]} alt="" />
++                ) : (
++                  <span className="bulk-thumb bulk-thumb-ext mono">{extOf(it.file.name)}</span>
++                )}
+                 <span className="bulk-name mono">{it.file.name}</span>
+                 <span className="bulk-status mono">
+                   {it.status === "queued" && "Queued"}
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+index 7968f13..4891678 100644
+--- a/components/CircleCrop.tsx
++++ b/components/CircleCrop.tsx
+@@ -13,6 +13,7 @@ export default function CircleCrop() {
+   const [ring, setRing] = useState(0);
+   const [out, setOut] = useState<string | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+@@ -30,6 +31,7 @@ export default function CircleCrop() {
+     bmp.current = decoded;
+     setNat(sourceSize(decoded));
+     setName(file.name);
++    setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+     setOut(null);
+   }, []);
+@@ -37,26 +39,34 @@ export default function CircleCrop() {
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
+     setBusy(true);
+-    const size = Math.min(nat.w, nat.h);
+-    const canvas = document.createElement("canvas");
+-    canvas.width = size; canvas.height = size;
+-    const ctx = canvas.getContext("2d")!;
+-    ctx.save();
+-    ctx.beginPath();
+-    ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+-    ctx.clip();
+-    ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
+-    ctx.restore();
+-    if (ring > 0) {
+-      ctx.lineWidth = ring;
+-      ctx.strokeStyle = "#ffffff";
++    setError("");
++    try {
++      const size = Math.min(nat.w, nat.h);
++      const canvas = document.createElement("canvas");
++      canvas.width = size; canvas.height = size;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      ctx.save();
+       ctx.beginPath();
+-      ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
+-      ctx.stroke();
++      ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
++      ctx.clip();
++      ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
++      ctx.restore();
++      if (ring > 0) {
++        ctx.lineWidth = ring;
++        ctx.strokeStyle = "#ffffff";
++        ctx.beginPath();
++        ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
++        ctx.stroke();
++      }
++      const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
++      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++      setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not create the circle crop.");
++    } finally {
++      setBusy(false);
+     }
+-    const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
+-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+-    setBusy(false);
+   }, [nat, ring]);
+ 
+   const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
+@@ -65,7 +75,7 @@ export default function CircleCrop() {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out);
+     release(bmp.current); bmp.current = null;
+-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0);
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -104,6 +114,8 @@ export default function CircleCrop() {
+             <img src={out ?? srcUrl} alt="Preview" style={out ? undefined : { borderRadius: "50%", aspectRatio: "1 / 1", objectFit: "cover", width: "min(320px, 80%)" }} />
+           </div>
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             {!out ? (
+               <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Make circle PNG"}</button>
+diff --git a/components/CropImage.tsx b/components/CropImage.tsx
+index 188001c..d3003a4 100644
+--- a/components/CropImage.tsx
++++ b/components/CropImage.tsx
+@@ -24,6 +24,7 @@ export default function CropImage() {
+   const [nat, setNat] = useState({ w: 0, h: 0 });
+   const [aspect, setAspect] = useState<number | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+   const [, tick] = useState(0);
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+@@ -50,6 +51,7 @@ export default function CropImage() {
+     box.current = { x: (s.w - w) / 2, y: (s.h - h) / 2, w, h };
+     setAspect(null);
+     setName(file.name);
++    setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+   }, []);
+ 
+@@ -114,26 +116,32 @@ export default function CropImage() {
+   const download = useCallback(async () => {
+     if (!bmp.current) return;
+     setBusy(true);
+-    const b = box.current;
+-    const canvas = document.createElement("canvas");
+-    canvas.width = Math.round(b.w);
+-    canvas.height = Math.round(b.h);
+-    const ctx = canvas.getContext("2d")!;
+-    ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+-    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+-    if (blob) {
++    setError("");
++    try {
++      const b = box.current;
++      const canvas = document.createElement("canvas");
++      canvas.width = Math.round(b.w);
++      canvas.height = Math.round(b.h);
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
++      const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
++      const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
++      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
+       setTimeout(() => URL.revokeObjectURL(url), 4000);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not export this image.");
++    } finally {
++      setBusy(false);
+     }
+-    setBusy(false);
+   }, [name]);
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     release(bmp.current); bmp.current = null;
+-    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 });
++    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -185,6 +193,8 @@ export default function CropImage() {
+             </div>
+           </div>
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             <button className="btn primary" type="button" onClick={download} disabled={busy}>{busy ? "Working…" : "Crop & download"}</button>
+             <button className="btn" type="button" onClick={reset}>New image</button>
+diff --git a/components/ImageCompressor.tsx b/components/ImageCompressor.tsx
+index a6b1f44..da43ce2 100644
+--- a/components/ImageCompressor.tsx
++++ b/components/ImageCompressor.tsx
+@@ -13,25 +13,31 @@ function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result
+     const url = URL.createObjectURL(file);
+     const image = new Image();
+     image.onload = () => {
+-      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+-      const w = Math.round(image.naturalWidth * scale);
+-      const h = Math.round(image.naturalHeight * scale);
+-      const canvas = document.createElement("canvas");
+-      canvas.width = w;
+-      canvas.height = h;
+-      const ctx = canvas.getContext("2d")!;
+-      ctx.imageSmoothingEnabled = true;
+-      ctx.imageSmoothingQuality = "high";
+-      if (f === "image/jpeg") {
+-        ctx.fillStyle = "#fff";
+-        ctx.fillRect(0, 0, w, h);
++      try {
++        const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
++        const w = Math.round(image.naturalWidth * scale);
++        const h = Math.round(image.naturalHeight * scale);
++        const canvas = document.createElement("canvas");
++        canvas.width = w;
++        canvas.height = h;
++        const ctx = canvas.getContext("2d");
++        if (!ctx) throw new Error("Could not create a canvas context");
++        ctx.imageSmoothingEnabled = true;
++        ctx.imageSmoothingQuality = "high";
++        if (f === "image/jpeg") {
++          ctx.fillStyle = "#fff";
++          ctx.fillRect(0, 0, w, h);
++        }
++        ctx.drawImage(image, 0, 0, w, h);
++        URL.revokeObjectURL(url);
++        canvas.toBlob((blob) => {
++          if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
++          else reject(new Error("Too large for your browser to export"));
++        }, f, q);
++      } catch (err) {
++        URL.revokeObjectURL(url);
++        reject(err instanceof Error ? err : new Error("Could not compress this file"));
+       }
+-      ctx.drawImage(image, 0, 0, w, h);
+-      URL.revokeObjectURL(url);
+-      canvas.toBlob((blob) => {
+-        if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
+-        else reject(new Error("Could not encode"));
+-      }, f, q);
+     };
+     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
+     image.src = url;
+@@ -50,6 +56,7 @@ export default function ImageCompressor() {
+   const [fmt, setFmt] = useState<Fmt>("image/jpeg");
+   const [out, setOut] = useState<Result | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
+   useEffect(() => {
+@@ -62,35 +69,44 @@ export default function ImageCompressor() {
+   const compress = useCallback(
+     (image: HTMLImageElement, q: number, mw: number, f: Fmt) => {
+       setBusy(true);
+-      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+-      const w = Math.round(image.naturalWidth * scale);
+-      const h = Math.round(image.naturalHeight * scale);
+-      const canvas = document.createElement("canvas");
+-      canvas.width = w;
+-      canvas.height = h;
+-      const ctx = canvas.getContext("2d")!;
+-      ctx.imageSmoothingEnabled = true;
+-      ctx.imageSmoothingQuality = "high";
+-      // PNG has no alpha loss to worry about, but JPG needs an opaque
+-      // background or transparent pixels turn black.
+-      if (f === "image/jpeg") {
+-        ctx.fillStyle = "#fff";
+-        ctx.fillRect(0, 0, w, h);
++      setError("");
++      try {
++        const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
++        const w = Math.round(image.naturalWidth * scale);
++        const h = Math.round(image.naturalHeight * scale);
++        const canvas = document.createElement("canvas");
++        canvas.width = w;
++        canvas.height = h;
++        const ctx = canvas.getContext("2d");
++        if (!ctx) throw new Error("Could not create a canvas context");
++        ctx.imageSmoothingEnabled = true;
++        ctx.imageSmoothingQuality = "high";
++        // PNG has no alpha loss to worry about, but JPG needs an opaque
++        // background or transparent pixels turn black.
++        if (f === "image/jpeg") {
++          ctx.fillStyle = "#fff";
++          ctx.fillRect(0, 0, w, h);
++        }
++        ctx.drawImage(image, 0, 0, w, h);
++        canvas.toBlob(
++          (blob) => {
++            if (blob) {
++              setOut((prev) => {
++                if (prev) URL.revokeObjectURL(prev.url);
++                return { url: URL.createObjectURL(blob), blob, w, h };
++              });
++            } else {
++              setError("This image is too large for your browser to export. Try a smaller image or lower the max width.");
++            }
++            setBusy(false);
++          },
++          f,
++          q
++        );
++      } catch (err) {
++        setError(err instanceof Error ? err.message : "Could not compress this image.");
++        setBusy(false);
+       }
+-      ctx.drawImage(image, 0, 0, w, h);
+-      canvas.toBlob(
+-        (blob) => {
+-          if (blob) {
+-            setOut((prev) => {
+-              if (prev) URL.revokeObjectURL(prev.url);
+-              return { url: URL.createObjectURL(blob), blob, w, h };
+-            });
+-          }
+-          setBusy(false);
+-        },
+-        f,
+-        q
+-      );
+     },
+     []
+   );
+@@ -102,6 +118,7 @@ export default function ImageCompressor() {
+       setSrcUrl(url);
+       setName(file.name);
+       setOrigSize(file.size);
++      setError("");
+       const detected = outputFmt(file.type);
+       setFmt(detected);
+       const image = new Image();
+@@ -109,6 +126,7 @@ export default function ImageCompressor() {
+         setImg(image);
+         compress(image, quality, maxW, detected);
+       };
++      image.onerror = () => setError("Could not read this image.");
+       image.src = url;
+     },
+     [compress, quality, maxW]
+@@ -128,6 +146,7 @@ export default function ImageCompressor() {
+     setOut(null);
+     setName("");
+     setOrigSize(0);
++    setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -253,6 +272,8 @@ export default function ImageCompressor() {
+             </div>
+           )}
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
+               {busy ? "Working…" : `Download ${FMT_LABEL[fmt]}`}
+diff --git a/components/ImageConverter.tsx b/components/ImageConverter.tsx
+index 2274619..ff2580d 100644
+--- a/components/ImageConverter.tsx
++++ b/components/ImageConverter.tsx
+@@ -9,17 +9,27 @@ function convertFile(file: File, f: Fmt): Promise<Blob> {
+     const url = URL.createObjectURL(file);
+     const image = new Image();
+     image.onload = () => {
+-      const canvas = document.createElement("canvas");
+-      canvas.width = image.naturalWidth;
+-      canvas.height = image.naturalHeight;
+-      const ctx = canvas.getContext("2d")!;
+-      if (f === "image/jpeg") {
+-        ctx.fillStyle = "#ffffff";
+-        ctx.fillRect(0, 0, canvas.width, canvas.height);
++      try {
++        const canvas = document.createElement("canvas");
++        canvas.width = image.naturalWidth;
++        canvas.height = image.naturalHeight;
++        const ctx = canvas.getContext("2d");
++        if (!ctx) throw new Error("Could not create a canvas context");
++        if (f === "image/jpeg") {
++          ctx.fillStyle = "#ffffff";
++          ctx.fillRect(0, 0, canvas.width, canvas.height);
++        }
++        ctx.drawImage(image, 0, 0);
++        URL.revokeObjectURL(url);
++        canvas.toBlob(
++          (blob) => (blob ? resolve(blob) : reject(new Error("Too large for your browser to export"))),
++          f,
++          0.97
++        );
++      } catch (err) {
++        URL.revokeObjectURL(url);
++        reject(err instanceof Error ? err : new Error("Could not convert this file"));
+       }
+-      ctx.drawImage(image, 0, 0);
+-      URL.revokeObjectURL(url);
+-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.97);
+     };
+     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
+     image.src = url;
+@@ -35,6 +45,7 @@ export default function ImageConverter() {
+   const [fmt, setFmt] = useState<Fmt>("image/webp");
+   const [out, setOut] = useState<{ url: string; blob: Blob } | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
+   useEffect(() => {
+@@ -46,26 +57,37 @@ export default function ImageConverter() {
+ 
+   const convert = useCallback((image: HTMLImageElement, f: Fmt) => {
+     setBusy(true);
+-    const canvas = document.createElement("canvas");
+-    canvas.width = image.naturalWidth;
+-    canvas.height = image.naturalHeight;
+-    const ctx = canvas.getContext("2d")!;
+-    if (f === "image/jpeg") {
+-      ctx.fillStyle = "#ffffff"; // JPG has no transparency
+-      ctx.fillRect(0, 0, canvas.width, canvas.height);
++    setError("");
++    try {
++      const canvas = document.createElement("canvas");
++      canvas.width = image.naturalWidth;
++      canvas.height = image.naturalHeight;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      if (f === "image/jpeg") {
++        ctx.fillStyle = "#ffffff"; // JPG has no transparency
++        ctx.fillRect(0, 0, canvas.width, canvas.height);
++      }
++      ctx.drawImage(image, 0, 0);
++      canvas.toBlob(
++        (blob) => {
++          if (blob) {
++            setOut((prev) => {
++              if (prev) URL.revokeObjectURL(prev.url);
++              return { url: URL.createObjectURL(blob), blob };
++            });
++          } else {
++            setError("This image is too large for your browser to export. Try a smaller image.");
++          }
++          setBusy(false);
++        },
++        f,
++        0.97
++      );
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not convert this image.");
++      setBusy(false);
+     }
+-    ctx.drawImage(image, 0, 0);
+-    canvas.toBlob(
+-      (blob) => {
+-        if (blob) setOut((prev) => {
+-          if (prev) URL.revokeObjectURL(prev.url);
+-          return { url: URL.createObjectURL(blob), blob };
+-        });
+-        setBusy(false);
+-      },
+-      f,
+-      0.97
+-    );
+   }, []);
+ 
+   const handleFile = useCallback((file: File) => {
+@@ -73,11 +95,13 @@ export default function ImageConverter() {
+     const url = URL.createObjectURL(file);
+     setSrcUrl(url);
+     setName(file.name);
++    setError("");
+     const image = new Image();
+     image.onload = () => {
+       setImg(image);
+       convert(image, fmt);
+     };
++    image.onerror = () => setError("Could not read this image.");
+     image.src = url;
+   }, [convert, fmt]);
+ 
+@@ -93,6 +117,7 @@ export default function ImageConverter() {
+     setSrcUrl(null);
+     setOut(null);
+     setName("");
++    setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -169,6 +194,8 @@ export default function ImageConverter() {
+             </div>
+           )}
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
+               {busy ? "Working…" : `Download ${LABEL[fmt]}`}
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+index 48c19f7..a17687f 100644
+--- a/components/MetadataRemover.tsx
++++ b/components/MetadataRemover.tsx
+@@ -15,6 +15,7 @@ export default function MetadataRemover() {
+   const [fmt, setFmt] = useState<Fmt>("image/jpeg");
+   const [out, setOut] = useState<{ url: string; size: number } | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+@@ -34,6 +35,7 @@ export default function MetadataRemover() {
+     setSrcSize(file.size);
+     setName(file.name);
+     setFmt(outputFmt(file.type));
++    setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+     setOut(null);
+   }, []);
+@@ -41,14 +43,22 @@ export default function MetadataRemover() {
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
+     setBusy(true);
+-    const canvas = document.createElement("canvas");
+-    canvas.width = nat.w; canvas.height = nat.h;
+-    const ctx = canvas.getContext("2d")!;
+-    if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+-    ctx.drawImage(bmp.current, 0, 0);
+-    const blob = await canvasToBlob(canvas, fmt, 0.97);
+-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+-    setBusy(false);
++    setError("");
++    try {
++      const canvas = document.createElement("canvas");
++      canvas.width = nat.w; canvas.height = nat.h;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
++      ctx.drawImage(bmp.current, 0, 0);
++      const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++      setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not process this image.");
++    } finally {
++      setBusy(false);
++    }
+   }, [nat, fmt]);
+ 
+   const download = () => {
+@@ -60,7 +70,7 @@ export default function MetadataRemover() {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out.url);
+     release(bmp.current); bmp.current = null;
+-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0);
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -101,6 +111,8 @@ export default function MetadataRemover() {
+             <img src={out?.url ?? srcUrl} alt="Preview" />
+           </div>
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             {!out ? (
+               <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Remove metadata"}</button>
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index 1585acd..91f0a91 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -22,7 +22,7 @@ function resizeFileByPercent(file: File, pct: number, f: Fmt): Promise<Blob> {
+       ctx.imageSmoothingQuality = "high";
+       ctx.drawImage(bmp, 0, 0, w, h);
+       release(bmp);
+-      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
++      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Too large for your browser to export"))));
+     }).catch(reject);
+   });
+ }
+@@ -41,6 +41,7 @@ export default function ImageResizer() {
+   const [fmt, setFmt] = useState<Fmt>("image/png");
+   const [out, setOut] = useState<{ url: string; size: number } | null>(null);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+@@ -61,6 +62,7 @@ export default function ImageResizer() {
+     setNat(s); setW(s.w); setH(s.h);
+     setName(file.name);
+     setFmt(outputFmt(file.type));
++    setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+     setOut(null);
+   }, []);
+@@ -81,14 +83,22 @@ export default function ImageResizer() {
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
+     setBusy(true);
+-    const canvas = document.createElement("canvas");
+-    canvas.width = w; canvas.height = h;
+-    const ctx = canvas.getContext("2d")!;
+-    ctx.imageSmoothingQuality = "high";
+-    ctx.drawImage(bmp.current, 0, 0, w, h);
+-    const blob = await canvasToBlob(canvas, fmt, 0.97);
+-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+-    setBusy(false);
++    setError("");
++    try {
++      const canvas = document.createElement("canvas");
++      canvas.width = w; canvas.height = h;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      ctx.imageSmoothingQuality = "high";
++      ctx.drawImage(bmp.current, 0, 0, w, h);
++      const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (!blob) throw new Error("This size is too large for your browser to export. Try a smaller width/height.");
++      setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not resize this image.");
++    } finally {
++      setBusy(false);
++    }
+   }, [w, h, fmt]);
+ 
+   const download = () => {
+@@ -100,7 +110,7 @@ export default function ImageResizer() {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out.url);
+     release(bmp.current); bmp.current = null;
+-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 });
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -200,6 +210,8 @@ export default function ImageResizer() {
+             <img src={out?.url ?? srcUrl} alt="Preview" />
+           </div>
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             {!out ? (
+               <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Resize image"}</button>
+diff --git a/components/RotateImage.tsx b/components/RotateImage.tsx
+index 03a20c5..5598681 100644
+--- a/components/RotateImage.tsx
++++ b/components/RotateImage.tsx
+@@ -15,6 +15,7 @@ export default function ImageRotator() {
+   const [flipH, setFlipH] = useState(false);
+   const [flipV, setFlipV] = useState(false);
+   const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+@@ -32,38 +33,49 @@ export default function ImageRotator() {
+     setNat(sourceSize(decoded));
+     setName(file.name);
+     setDeg(0); setFlipH(false); setFlipV(false);
++    setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+   }, []);
+ 
+   const download = useCallback(async () => {
+     if (!bmp.current) return;
+     setBusy(true);
+-    const rad = (deg * Math.PI) / 180;
+-    const swap = deg % 180 !== 0;
+-    const canvas = document.createElement("canvas");
+-    canvas.width = swap ? nat.h : nat.w;
+-    canvas.height = swap ? nat.w : nat.h;
+-    const ctx = canvas.getContext("2d")!;
+-    ctx.save();
+-    ctx.translate(canvas.width / 2, canvas.height / 2);
+-    ctx.rotate(rad);
+-    ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+-    ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
+-    ctx.restore();
+-    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+-    if (blob) {
++    setError("");
++    // try/finally guarantees the button never gets stuck on "Working…" —
++    // without this, any failure here (huge canvas allocation, a detached
++    // bitmap, an out-of-memory toBlob) left busy stuck true forever with
++    // no download and no error, which looked like a permanent hang.
++    try {
++      const rad = (deg * Math.PI) / 180;
++      const swap = deg % 180 !== 0;
++      const canvas = document.createElement("canvas");
++      canvas.width = swap ? nat.h : nat.w;
++      canvas.height = swap ? nat.w : nat.h;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      ctx.save();
++      ctx.translate(canvas.width / 2, canvas.height / 2);
++      ctx.rotate(rad);
++      ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
++      ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
++      ctx.restore();
++      const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
++      const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
++      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
+       setTimeout(() => URL.revokeObjectURL(url), 4000);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not export this image.");
++    } finally {
++      setBusy(false);
+     }
+-    setBusy(false);
+   }, [deg, flipH, flipV, nat, name]);
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     release(bmp.current); bmp.current = null;
+-    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 });
++    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -106,6 +118,8 @@ export default function ImageRotator() {
+             />
+           </div>
+ 
++          {error && <div className="error">{error}</div>}
++
+           <div className="actions">
+             <button className="btn primary" type="button" onClick={download} disabled={busy}>{busy ? "Working…" : "Download"}</button>
+             <button className="btn" type="button" onClick={reset}>New image</button>
+diff --git a/components/Watermark.tsx b/components/Watermark.tsx
+new file mode 100644
+index 0000000..2358681
+--- /dev/null
++++ b/components/Watermark.tsx
+@@ -0,0 +1,298 @@
++"use client";
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import {
++  decode, sourceSize, release, canvasToBlob, triggerDownload,
++  baseName, prettyBytes, outputFmt, FMT_LABEL, FMT_EXT, type Fmt,
++} from "@/lib/image";
++import BulkPanel, { type BulkResult } from "./BulkPanel";
++
++type Position = "tl" | "tc" | "tr" | "cl" | "cc" | "cr" | "bl" | "bc" | "br";
++
++const POSITIONS: { value: Position; label: string }[] = [
++  { value: "tl", label: "↖" }, { value: "tc", label: "↑" }, { value: "tr", label: "↗" },
++  { value: "cl", label: "←" }, { value: "cc", label: "•" }, { value: "cr", label: "→" },
++  { value: "bl", label: "↙" }, { value: "bc", label: "↓" }, { value: "br", label: "↘" },
++];
++
++export interface WatermarkSettings {
++  text: string;
++  size: number; // px, relative to a 1000px-wide image; scaled per-image
++  opacity: number; // 0-1
++  color: string;
++  position: Position;
++  tiled: boolean;
++  rotateTiled: number; // degrees, only used when tiled
++}
++
++function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, s: WatermarkSettings) {
++  if (!s.text.trim()) return;
++  const fontSize = Math.max(8, Math.round((s.size / 1000) * w));
++  ctx.save();
++  ctx.globalAlpha = s.opacity;
++  ctx.fillStyle = s.color;
++  ctx.font = `700 ${fontSize}px system-ui, sans-serif`;
++  ctx.textBaseline = "middle";
++
++  if (s.tiled) {
++    const metrics = ctx.measureText(s.text);
++    const stepX = metrics.width + fontSize * 2;
++    const stepY = fontSize * 4;
++    ctx.translate(w / 2, h / 2);
++    ctx.rotate((s.rotateTiled * Math.PI) / 180);
++    ctx.textAlign = "center";
++    const span = Math.hypot(w, h);
++    for (let y = -span; y <= span; y += stepY) {
++      for (let x = -span; x <= span; x += stepX) {
++        ctx.fillText(s.text, x, y);
++      }
++    }
++  } else {
++    const pad = fontSize * 0.6;
++    const align: CanvasTextAlign = s.position.endsWith("l") ? "left" : s.position.endsWith("r") ? "right" : "center";
++    ctx.textAlign = align;
++    const x = s.position.endsWith("l") ? pad : s.position.endsWith("r") ? w - pad : w / 2;
++    const y = s.position.startsWith("t") ? pad + fontSize / 2 : s.position.startsWith("b") ? h - pad - fontSize / 2 : h / 2;
++    ctx.fillText(s.text, x, y);
++  }
++  ctx.restore();
++}
++
++async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promise<Blob> {
++  const bmp = await decode(file);
++  try {
++    const { w, h } = sourceSize(bmp);
++    const canvas = document.createElement("canvas");
++    canvas.width = w;
++    canvas.height = h;
++    const ctx = canvas.getContext("2d");
++    if (!ctx) throw new Error("Could not create a canvas context");
++    if (fmt === "image/jpeg") {
++      ctx.fillStyle = "#fff";
++      ctx.fillRect(0, 0, w, h);
++    }
++    ctx.drawImage(bmp, 0, 0);
++    drawWatermark(ctx, w, h, s);
++    const blob = await canvasToBlob(canvas, fmt, 0.97);
++    if (!blob) throw new Error("Too large for your browser to export");
++    return blob;
++  } finally {
++    release(bmp);
++  }
++}
++
++const DEFAULTS: WatermarkSettings = {
++  text: "© Your Name",
++  size: 36,
++  opacity: 0.6,
++  color: "#ffffff",
++  position: "br",
++  tiled: false,
++  rotateTiled: -30,
++};
++
++export default function Watermark() {
++  const [mode, setMode] = useState<"single" | "bulk">("single");
++  const [settings, setSettings] = useState<WatermarkSettings>(DEFAULTS);
++  const [over, setOver] = useState(false);
++  const [srcUrl, setSrcUrl] = useState<string | null>(null);
++  const [name, setName] = useState("");
++  const [nat, setNat] = useState({ w: 0, h: 0 });
++  const [fmt, setFmt] = useState<Fmt>("image/jpeg");
++  const [out, setOut] = useState<{ url: string; size: number } | null>(null);
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
++
++  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  useEffect(() => () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current);
++  }, [srcUrl, out]);
++
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    release(bmp.current);
++    const decoded = await decode(file);
++    bmp.current = decoded;
++    setNat(sourceSize(decoded));
++    setName(file.name);
++    setFmt(outputFmt(file.type));
++    setError("");
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++    setOut(null);
++  }, []);
++
++  const run = useCallback(async () => {
++    if (!bmp.current) return;
++    setBusy(true);
++    setError("");
++    try {
++      const canvas = document.createElement("canvas");
++      canvas.width = nat.w; canvas.height = nat.h;
++      const ctx = canvas.getContext("2d");
++      if (!ctx) throw new Error("Could not create a canvas context");
++      if (fmt === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, nat.w, nat.h); }
++      ctx.drawImage(bmp.current, 0, 0);
++      drawWatermark(ctx, nat.w, nat.h, settings);
++      const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++      setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not watermark this image.");
++    } finally {
++      setBusy(false);
++    }
++  }, [nat, fmt, settings]);
++
++  // live preview: re-stamp whenever a new image loads or a setting changes
++  useEffect(() => {
++    if (bmp.current) run();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [srcUrl, settings, fmt]);
++
++  const download = () => {
++    if (!out) return;
++    triggerDownload(out.url, `${baseName(name)}-watermarked.${FMT_EXT[fmt]}`);
++  };
++
++  const reset = () => {
++    if (srcUrl) URL.revokeObjectURL(srcUrl);
++    if (out) URL.revokeObjectURL(out.url);
++    release(bmp.current); bmp.current = null;
++    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
++    if (inputRef.current) inputRef.current.value = "";
++  };
++
++  const bulkProcess = useCallback(
++    async (file: File): Promise<BulkResult> => {
++      const detected = outputFmt(file.type);
++      const blob = await watermarkFile(file, settings, detected);
++      return { blob, ext: FMT_EXT[detected] };
++    },
++    [settings]
++  );
++
++  const set = <K extends keyof WatermarkSettings>(key: K, value: WatermarkSettings[K]) => {
++    setSettings((s) => ({ ...s, [key]: value }));
++    setOut(null);
++  };
++
++  const controls = (
++    <>
++      <div className="controls">
++        <label className="ctrl">
++          <span>Watermark text</span>
++          <input
++            className="mono"
++            type="text"
++            value={settings.text}
++            onChange={(e) => set("text", e.target.value)}
++            placeholder="© Your Name"
++            maxLength={60}
++          />
++        </label>
++        <label className="ctrl">
++          <span>Size: {settings.size}</span>
++          <input type="range" min={12} max={120} value={settings.size} onChange={(e) => set("size", Number(e.target.value))} />
++        </label>
++        <label className="ctrl">
++          <span>Opacity: {Math.round(settings.opacity * 100)}%</span>
++          <input type="range" min={10} max={100} value={settings.opacity * 100} onChange={(e) => set("opacity", Number(e.target.value) / 100)} />
++        </label>
++        <label className="ctrl">
++          <span>Color</span>
++          <input type="color" value={settings.color} onChange={(e) => set("color", e.target.value)} />
++        </label>
++      </div>
++
++      <div className="fmt-row">
++        <button type="button" className={`fmt-btn${!settings.tiled ? " on" : ""}`} onClick={() => set("tiled", false)}>Single mark</button>
++        <button type="button" className={`fmt-btn${settings.tiled ? " on" : ""}`} onClick={() => set("tiled", true)}>Tiled (repeats)</button>
++      </div>
++
++      {!settings.tiled ? (
++        <div className="fmt-row">
++          {POSITIONS.map((p) => (
++            <button
++              key={p.value}
++              type="button"
++              className={`fmt-btn${settings.position === p.value ? " on" : ""}`}
++              onClick={() => set("position", p.value)}
++              title={p.value}
++            >
++              {p.label}
++            </button>
++          ))}
++        </div>
++      ) : (
++        <div className="controls">
++          <label className="ctrl">
++            <span>Tile angle: {settings.rotateTiled}°</span>
++            <input type="range" min={-90} max={90} value={settings.rotateTiled} onChange={(e) => set("rotateTiled", Number(e.target.value))} />
++          </label>
++        </div>
++      )}
++    </>
++  );
++
++  return (
++    <div className="tool">
++      <div className="mode-row">
++        <button type="button" className={`mode-btn${mode === "single" ? " on" : ""}`} onClick={() => setMode("single")}>Single image</button>
++        <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
++      </div>
++
++      {mode === "bulk" ? (
++        <>
++          {controls}
++          <BulkPanel
++            process={bulkProcess}
++            zipName="watermarked-images.zip"
++            suffix="-watermarked"
++            hint="Same watermark settings applied to every file, in parallel"
++          />
++        </>
++      ) : !srcUrl ? (
++        <div
++          className={`drop${over ? " over" : ""}`}
++          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
++          onDragLeave={() => setOver(false)}
++          onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
++          onClick={() => inputRef.current?.click()}
++          role="button" tabIndex={0}
++          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && inputRef.current?.click()}
++        >
++          <div className="drop-mark checker" />
++          <h2 className="display">Drop an image to watermark</h2>
++          <p>Text watermark, single or tiled · stamped in your browser</p>
++          <button className="pick" type="button">Choose image</button>
++          <input ref={inputRef} className="hidden-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
++        </div>
++      ) : (
++        <div className="stage">
++          <div className="meta mono">
++            <span>{name}</span><span className="dot" /><span>{nat.w}×{nat.h}</span>
++          </div>
++
++          {controls}
++
++          <div className="preview checker">
++            <img src={out?.url ?? srcUrl} alt="Preview" />
++          </div>
++
++          {error && <div className="error">{error}</div>}
++
++          <div className="actions">
++            <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
++              {busy ? "Working…" : "Download"}
++            </button>
++            <button className="btn" type="button" onClick={reset}>New image</button>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}

@@ -12,6 +12,7 @@ const TOOLS = [
   "rotate-image",
   "remove-metadata",
   "convert-file",
+  "watermark",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

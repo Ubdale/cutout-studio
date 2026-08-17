@@ -64,6 +64,13 @@ const tools = [
     pill: "Live",
     live: true,
   },
+  {
+    href: "/watermark",
+    title: "Watermark",
+    desc: "Stamp a text watermark — single or tiled — on your photos.",
+    pill: "Live",
+    live: true,
+  },
 ];
 
 export default function Home() {

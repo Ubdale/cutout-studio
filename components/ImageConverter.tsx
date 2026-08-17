@@ -9,17 +9,27 @@ function convertFile(file: File, f: Fmt): Promise<Blob> {
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const ctx = canvas.getContext("2d")!;
-      if (f === "image/jpeg") {
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Could not create a canvas context");
+        if (f === "image/jpeg") {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.drawImage(image, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("Too large for your browser to export"))),
+          f,
+          0.97
+        );
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err instanceof Error ? err : new Error("Could not convert this file"));
       }
-      ctx.drawImage(image, 0, 0);
-      URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))), f, 0.97);
     };
     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
     image.src = url;
@@ -35,6 +45,7 @@ export default function ImageConverter() {
   const [fmt, setFmt] = useState<Fmt>("image/webp");
   const [out, setOut] = useState<{ url: string; blob: Blob } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -46,26 +57,37 @@ export default function ImageConverter() {
 
   const convert = useCallback((image: HTMLImageElement, f: Fmt) => {
     setBusy(true);
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const ctx = canvas.getContext("2d")!;
-    if (f === "image/jpeg") {
-      ctx.fillStyle = "#ffffff"; // JPG has no transparency
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setError("");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Could not create a canvas context");
+      if (f === "image/jpeg") {
+        ctx.fillStyle = "#ffffff"; // JPG has no transparency
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(image, 0, 0);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            setOut((prev) => {
+              if (prev) URL.revokeObjectURL(prev.url);
+              return { url: URL.createObjectURL(blob), blob };
+            });
+          } else {
+            setError("This image is too large for your browser to export. Try a smaller image.");
+          }
+          setBusy(false);
+        },
+        f,
+        0.97
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not convert this image.");
+      setBusy(false);
     }
-    ctx.drawImage(image, 0, 0);
-    canvas.toBlob(
-      (blob) => {
-        if (blob) setOut((prev) => {
-          if (prev) URL.revokeObjectURL(prev.url);
-          return { url: URL.createObjectURL(blob), blob };
-        });
-        setBusy(false);
-      },
-      f,
-      0.97
-    );
   }, []);
 
   const handleFile = useCallback((file: File) => {
@@ -73,11 +95,13 @@ export default function ImageConverter() {
     const url = URL.createObjectURL(file);
     setSrcUrl(url);
     setName(file.name);
+    setError("");
     const image = new Image();
     image.onload = () => {
       setImg(image);
       convert(image, fmt);
     };
+    image.onerror = () => setError("Could not read this image.");
     image.src = url;
   }, [convert, fmt]);
 
@@ -93,6 +117,7 @@ export default function ImageConverter() {
     setSrcUrl(null);
     setOut(null);
     setName("");
+    setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -168,6 +193,8 @@ export default function ImageConverter() {
               <img src={out.url} alt="Converted preview" />
             </div>
           )}
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>

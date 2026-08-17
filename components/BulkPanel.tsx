@@ -1,12 +1,16 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { prettyBytes } from "@/lib/image";
 import { runQueue, downloadZip, idealConcurrency, type QueueItem, type CancelToken } from "@/lib/bulk";
 
 export interface BulkResult {
   blob: Blob;
   ext: string;
+}
+
+function extOf(name: string): string {
+  return (name.split(".").pop() || "").slice(0, 4).toUpperCase();
 }
 
 export default function BulkPanel({
@@ -36,13 +40,45 @@ export default function BulkPanel({
 }) {
   const matches = filter ?? ((f: File) => f.type.startsWith("image/"));
   const [items, setItems] = useState<QueueItem<BulkResult>[]>([]);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [over, setOver] = useState(false);
   const cancelRef = useRef<CancelToken>({ cancelled: false });
   const inputRef = useRef<HTMLInputElement>(null);
+  const thumbsRef = useRef<Record<string, string>>({});
+
+  // keep a ref mirror so unmount cleanup doesn't need thumbs in deps
+  useEffect(() => {
+    thumbsRef.current = thumbs;
+  }, [thumbs]);
+  useEffect(() => {
+    return () => {
+      Object.values(thumbsRef.current).forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, []);
 
   const outName = (file: File, ext: string) =>
     file.name.replace(/\.[^.]+$/, "") + suffix + "." + ext;
+
+  // Runs on every queue progress tick. Only generates a thumbnail the
+  // first time an item is seen — object URLs are relatively cheap, but
+  // there's no reason to ever make two for the same file. Non-image
+  // files (spreadsheets, etc.) never get one — they show an extension
+  // badge instead.
+  const handleUpdate = (newItems: QueueItem<BulkResult>[]) => {
+    setItems(newItems);
+    setThumbs((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const it of newItems) {
+        if (!(it.id in next) && it.file.type.startsWith("image/")) {
+          next[it.id] = URL.createObjectURL(it.file);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  };
 
   const start = async (files: File[]) => {
     const matched = files.filter(matches);
@@ -51,7 +87,7 @@ export default function BulkPanel({
     setRunning(true);
     await runQueue(matched, process, {
       concurrency: idealConcurrency(heavy),
-      onUpdate: setItems,
+      onUpdate: handleUpdate,
       signal: cancelRef.current,
     });
     setRunning(false);
@@ -85,6 +121,8 @@ export default function BulkPanel({
   };
 
   const clear = () => {
+    Object.values(thumbs).forEach((u) => URL.revokeObjectURL(u));
+    setThumbs({});
     setItems([]);
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -132,6 +170,12 @@ export default function BulkPanel({
           <div className="bulk-list">
             {items.map((it) => (
               <div key={it.id} className={`bulk-row ${it.status}`}>
+                {thumbs[it.id] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="bulk-thumb" src={thumbs[it.id]} alt="" />
+                ) : (
+                  <span className="bulk-thumb bulk-thumb-ext mono">{extOf(it.file.name)}</span>
+                )}
                 <span className="bulk-name mono">{it.file.name}</span>
                 <span className="bulk-status mono">
                   {it.status === "queued" && "Queued"}

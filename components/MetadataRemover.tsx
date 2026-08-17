@@ -15,6 +15,7 @@ export default function MetadataRemover() {
   const [fmt, setFmt] = useState<Fmt>("image/jpeg");
   const [out, setOut] = useState<{ url: string; size: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +35,7 @@ export default function MetadataRemover() {
     setSrcSize(file.size);
     setName(file.name);
     setFmt(outputFmt(file.type));
+    setError("");
     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setOut(null);
   }, []);
@@ -41,14 +43,22 @@ export default function MetadataRemover() {
   const run = useCallback(async () => {
     if (!bmp.current) return;
     setBusy(true);
-    const canvas = document.createElement("canvas");
-    canvas.width = nat.w; canvas.height = nat.h;
-    const ctx = canvas.getContext("2d")!;
-    if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
-    ctx.drawImage(bmp.current, 0, 0);
-    const blob = await canvasToBlob(canvas, fmt, 0.97);
-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
-    setBusy(false);
+    setError("");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = nat.w; canvas.height = nat.h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Could not create a canvas context");
+      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+      ctx.drawImage(bmp.current, 0, 0);
+      const blob = await canvasToBlob(canvas, fmt, 0.97);
+      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+      setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not process this image.");
+    } finally {
+      setBusy(false);
+    }
   }, [nat, fmt]);
 
   const download = () => {
@@ -60,7 +70,7 @@ export default function MetadataRemover() {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out.url);
     release(bmp.current); bmp.current = null;
-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0);
+    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -100,6 +110,8 @@ export default function MetadataRemover() {
           <div className="preview checker">
             <img src={out?.url ?? srcUrl} alt="Preview" />
           </div>
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             {!out ? (

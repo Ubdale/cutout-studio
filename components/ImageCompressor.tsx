@@ -13,25 +13,31 @@ function compressFile(file: File, q: number, mw: number, f: Fmt): Promise<Result
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
-      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
-      const w = Math.round(image.naturalWidth * scale);
-      const h = Math.round(image.naturalHeight * scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      if (f === "image/jpeg") {
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, w, h);
+      try {
+        const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+        const w = Math.round(image.naturalWidth * scale);
+        const h = Math.round(image.naturalHeight * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Could not create a canvas context");
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        if (f === "image/jpeg") {
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+        }
+        ctx.drawImage(image, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((blob) => {
+          if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
+          else reject(new Error("Too large for your browser to export"));
+        }, f, q);
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err instanceof Error ? err : new Error("Could not compress this file"));
       }
-      ctx.drawImage(image, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => {
-        if (blob) resolve({ url: URL.createObjectURL(blob), blob, w, h });
-        else reject(new Error("Could not encode"));
-      }, f, q);
     };
     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not decode")); };
     image.src = url;
@@ -50,6 +56,7 @@ export default function ImageCompressor() {
   const [fmt, setFmt] = useState<Fmt>("image/jpeg");
   const [out, setOut] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -62,35 +69,44 @@ export default function ImageCompressor() {
   const compress = useCallback(
     (image: HTMLImageElement, q: number, mw: number, f: Fmt) => {
       setBusy(true);
-      const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
-      const w = Math.round(image.naturalWidth * scale);
-      const h = Math.round(image.naturalHeight * scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      // PNG has no alpha loss to worry about, but JPG needs an opaque
-      // background or transparent pixels turn black.
-      if (f === "image/jpeg") {
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, w, h);
+      setError("");
+      try {
+        const scale = mw && image.naturalWidth > mw ? mw / image.naturalWidth : 1;
+        const w = Math.round(image.naturalWidth * scale);
+        const h = Math.round(image.naturalHeight * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Could not create a canvas context");
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        // PNG has no alpha loss to worry about, but JPG needs an opaque
+        // background or transparent pixels turn black.
+        if (f === "image/jpeg") {
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+        }
+        ctx.drawImage(image, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              setOut((prev) => {
+                if (prev) URL.revokeObjectURL(prev.url);
+                return { url: URL.createObjectURL(blob), blob, w, h };
+              });
+            } else {
+              setError("This image is too large for your browser to export. Try a smaller image or lower the max width.");
+            }
+            setBusy(false);
+          },
+          f,
+          q
+        );
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not compress this image.");
+        setBusy(false);
       }
-      ctx.drawImage(image, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            setOut((prev) => {
-              if (prev) URL.revokeObjectURL(prev.url);
-              return { url: URL.createObjectURL(blob), blob, w, h };
-            });
-          }
-          setBusy(false);
-        },
-        f,
-        q
-      );
     },
     []
   );
@@ -102,6 +118,7 @@ export default function ImageCompressor() {
       setSrcUrl(url);
       setName(file.name);
       setOrigSize(file.size);
+      setError("");
       const detected = outputFmt(file.type);
       setFmt(detected);
       const image = new Image();
@@ -109,6 +126,7 @@ export default function ImageCompressor() {
         setImg(image);
         compress(image, quality, maxW, detected);
       };
+      image.onerror = () => setError("Could not read this image.");
       image.src = url;
     },
     [compress, quality, maxW]
@@ -128,6 +146,7 @@ export default function ImageCompressor() {
     setOut(null);
     setName("");
     setOrigSize(0);
+    setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -252,6 +271,8 @@ export default function ImageCompressor() {
               <img src={out.url} alt="Compressed preview" />
             </div>
           )}
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>

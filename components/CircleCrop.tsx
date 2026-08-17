@@ -13,6 +13,7 @@ export default function CircleCrop() {
   const [ring, setRing] = useState(0);
   const [out, setOut] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,6 +31,7 @@ export default function CircleCrop() {
     bmp.current = decoded;
     setNat(sourceSize(decoded));
     setName(file.name);
+    setError("");
     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setOut(null);
   }, []);
@@ -37,26 +39,34 @@ export default function CircleCrop() {
   const run = useCallback(async () => {
     if (!bmp.current) return;
     setBusy(true);
-    const size = Math.min(nat.w, nat.h);
-    const canvas = document.createElement("canvas");
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
-    ctx.restore();
-    if (ring > 0) {
-      ctx.lineWidth = ring;
-      ctx.strokeStyle = "#ffffff";
+    setError("");
+    try {
+      const size = Math.min(nat.w, nat.h);
+      const canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Could not create a canvas context");
+      ctx.save();
       ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
+      ctx.restore();
+      if (ring > 0) {
+        ctx.lineWidth = ring;
+        ctx.strokeStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
+      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+      setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the circle crop.");
+    } finally {
+      setBusy(false);
     }
-    const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
-    setBusy(false);
   }, [nat, ring]);
 
   const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
@@ -65,7 +75,7 @@ export default function CircleCrop() {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out);
     release(bmp.current); bmp.current = null;
-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0);
+    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -103,6 +113,8 @@ export default function CircleCrop() {
           <div className="preview checker">
             <img src={out ?? srcUrl} alt="Preview" style={out ? undefined : { borderRadius: "50%", aspectRatio: "1 / 1", objectFit: "cover", width: "min(320px, 80%)" }} />
           </div>
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             {!out ? (

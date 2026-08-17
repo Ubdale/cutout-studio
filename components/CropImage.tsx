@@ -24,6 +24,7 @@ export default function CropImage() {
   const [nat, setNat] = useState({ w: 0, h: 0 });
   const [aspect, setAspect] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [, tick] = useState(0);
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
@@ -50,6 +51,7 @@ export default function CropImage() {
     box.current = { x: (s.w - w) / 2, y: (s.h - h) / 2, w, h };
     setAspect(null);
     setName(file.name);
+    setError("");
     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
   }, []);
 
@@ -114,26 +116,32 @@ export default function CropImage() {
   const download = useCallback(async () => {
     if (!bmp.current) return;
     setBusy(true);
-    const b = box.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(b.w);
-    canvas.height = Math.round(b.h);
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
-    const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
-    const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
-    if (blob) {
+    setError("");
+    try {
+      const b = box.current;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(b.w);
+      canvas.height = Math.round(b.h);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Could not create a canvas context");
+      ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+      const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+      const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not export this image.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }, [name]);
 
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     release(bmp.current); bmp.current = null;
-    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 });
+    setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -184,6 +192,8 @@ export default function CropImage() {
               ))}
             </div>
           </div>
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             <button className="btn primary" type="button" onClick={download} disabled={busy}>{busy ? "Working…" : "Crop & download"}</button>

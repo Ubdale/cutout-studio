@@ -22,7 +22,7 @@ function resizeFileByPercent(file: File, pct: number, f: Fmt): Promise<Blob> {
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(bmp, 0, 0, w, h);
       release(bmp);
-      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Could not encode"))));
+      canvasToBlob(canvas, f, 0.97).then((blob) => (blob ? resolve(blob) : reject(new Error("Too large for your browser to export"))));
     }).catch(reject);
   });
 }
@@ -41,6 +41,7 @@ export default function ImageResizer() {
   const [fmt, setFmt] = useState<Fmt>("image/png");
   const [out, setOut] = useState<{ url: string; size: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +62,7 @@ export default function ImageResizer() {
     setNat(s); setW(s.w); setH(s.h);
     setName(file.name);
     setFmt(outputFmt(file.type));
+    setError("");
     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     setOut(null);
   }, []);
@@ -81,14 +83,22 @@ export default function ImageResizer() {
   const run = useCallback(async () => {
     if (!bmp.current) return;
     setBusy(true);
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext("2d")!;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(bmp.current, 0, 0, w, h);
-    const blob = await canvasToBlob(canvas, fmt, 0.97);
-    if (blob) setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
-    setBusy(false);
+    setError("");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Could not create a canvas context");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bmp.current, 0, 0, w, h);
+      const blob = await canvasToBlob(canvas, fmt, 0.97);
+      if (!blob) throw new Error("This size is too large for your browser to export. Try a smaller width/height.");
+      setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resize this image.");
+    } finally {
+      setBusy(false);
+    }
   }, [w, h, fmt]);
 
   const download = () => {
@@ -100,7 +110,7 @@ export default function ImageResizer() {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out.url);
     release(bmp.current); bmp.current = null;
-    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 });
+    setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -199,6 +209,8 @@ export default function ImageResizer() {
           <div className="preview checker">
             <img src={out?.url ?? srcUrl} alt="Preview" />
           </div>
+
+          {error && <div className="error">{error}</div>}
 
           <div className="actions">
             {!out ? (
