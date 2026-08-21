@@ -1,0 +1,103 @@
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+index 4891678..07e62c6 100644
+--- a/components/CircleCrop.tsx
++++ b/components/CircleCrop.tsx
+@@ -18,11 +18,18 @@ export default function CircleCrop() {
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
++  // Bitmap release must only fire when the source image changes (new
++  // file / unmount) — tying it to `out` closed the bitmap on every
++  // re-run of the ring/size controls, breaking the next draw with
++  // "image source is detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    if (out) URL.revokeObjectURL(out);
+     release(bmp.current);
+-  }, [srcUrl, out]);
++  }, [srcUrl]);
++
++  useEffect(() => () => {
++    if (out) URL.revokeObjectURL(out);
++  }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+index a17687f..22d19e9 100644
+--- a/components/MetadataRemover.tsx
++++ b/components/MetadataRemover.tsx
+@@ -20,11 +20,17 @@ export default function MetadataRemover() {
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
++  // Bitmap release must only fire when the source image changes (new
++  // file / unmount) — tying it to `out` closed the bitmap on every
++  // re-run, breaking the next draw with "image source is detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    if (out) URL.revokeObjectURL(out.url);
+     release(bmp.current);
+-  }, [srcUrl, out]);
++  }, [srcUrl]);
++
++  useEffect(() => () => {
++    if (out) URL.revokeObjectURL(out.url);
++  }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index 91f0a91..d318049 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -47,11 +47,18 @@ export default function ImageResizer() {
+   const inputRef = useRef<HTMLInputElement>(null);
+   const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
+ 
++  // Bitmap release must only fire when the source image changes (new
++  // file / unmount) — tying it to `out` closed the bitmap after the
++  // first resize, breaking every resize after it with "image source is
++  // detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    if (out) URL.revokeObjectURL(out.url);
+     release(bmp.current);
+-  }, [srcUrl, out]);
++  }, [srcUrl]);
++
++  useEffect(() => () => {
++    if (out) URL.revokeObjectURL(out.url);
++  }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+diff --git a/components/Watermark.tsx b/components/Watermark.tsx
+index 2358681..38e4f08 100644
+--- a/components/Watermark.tsx
++++ b/components/Watermark.tsx
+@@ -106,11 +106,22 @@ export default function Watermark() {
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+ 
++  // Releasing the bitmap must NOT be tied to `out` — `out` changes on
++  // every settings tweak (live preview re-applies on each slider move),
++  // and running this cleanup on every one of those closed the bitmap
++  // mid-session, breaking the very next draw with "image source is
++  // detached". It should only fire when the source image itself changes
++  // (a new file, or the component unmounting).
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    if (out) URL.revokeObjectURL(out.url);
+     release(bmp.current);
+-  }, [srcUrl, out]);
++  }, [srcUrl]);
++
++  // Revoking the previous output URL is independent of the bitmap and
++  // safe to run on every new result.
++  useEffect(() => () => {
++    if (out) URL.revokeObjectURL(out.url);
++  }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;

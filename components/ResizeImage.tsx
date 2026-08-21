@@ -47,11 +47,18 @@ export default function ImageResizer() {
   const inputRef = useRef<HTMLInputElement>(null);
   const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
 
+  // Bitmap release must only fire when the source image changes (new
+  // file / unmount) — tying it to `out` closed the bitmap after the
+  // first resize, breaking every resize after it with "image source is
+  // detached".
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    if (out) URL.revokeObjectURL(out.url);
     release(bmp.current);
-  }, [srcUrl, out]);
+  }, [srcUrl]);
+
+  useEffect(() => () => {
+    if (out) URL.revokeObjectURL(out.url);
+  }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;

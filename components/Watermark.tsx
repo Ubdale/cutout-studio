@@ -106,11 +106,22 @@ export default function Watermark() {
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Releasing the bitmap must NOT be tied to `out` — `out` changes on
+  // every settings tweak (live preview re-applies on each slider move),
+  // and running this cleanup on every one of those closed the bitmap
+  // mid-session, breaking the very next draw with "image source is
+  // detached". It should only fire when the source image itself changes
+  // (a new file, or the component unmounting).
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    if (out) URL.revokeObjectURL(out.url);
     release(bmp.current);
-  }, [srcUrl, out]);
+  }, [srcUrl]);
+
+  // Revoking the previous output URL is independent of the bitmap and
+  // safe to run on every new result.
+  useEffect(() => () => {
+    if (out) URL.revokeObjectURL(out.url);
+  }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;

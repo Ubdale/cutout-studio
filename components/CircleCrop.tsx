@@ -18,11 +18,18 @@ export default function CircleCrop() {
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Bitmap release must only fire when the source image changes (new
+  // file / unmount) — tying it to `out` closed the bitmap on every
+  // re-run of the ring/size controls, breaking the next draw with
+  // "image source is detached".
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    if (out) URL.revokeObjectURL(out);
     release(bmp.current);
-  }, [srcUrl, out]);
+  }, [srcUrl]);
+
+  useEffect(() => () => {
+    if (out) URL.revokeObjectURL(out);
+  }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
