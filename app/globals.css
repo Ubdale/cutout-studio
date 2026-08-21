@@ -536,6 +536,31 @@ button {
   width: 100%;
   accent-color: var(--accent);
 }
+.ctrl select,
+.ctrl input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.ctrl select:focus,
+.ctrl input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ctrl input[type="color"] {
+  width: 100%;
+  height: 40px;
+  padding: 2px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+}
 .preview {
   border-radius: 12px;
   overflow: hidden;
