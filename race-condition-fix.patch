@@ -1,0 +1,184 @@
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+index 07e62c6..ac8dbe8 100644
+--- a/components/CircleCrop.tsx
++++ b/components/CircleCrop.tsx
+@@ -17,6 +17,7 @@ export default function CircleCrop() {
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
++  const runGen = useRef(0);
+ 
+   // Bitmap release must only fire when the source image changes (new
+   // file / unmount) — tying it to `out` closed the bitmap on every
+@@ -45,6 +46,7 @@ export default function CircleCrop() {
+ 
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
++    const myRun = ++runGen.current;
+     setBusy(true);
+     setError("");
+     try {
+@@ -53,6 +55,7 @@ export default function CircleCrop() {
+       canvas.width = size; canvas.height = size;
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
++      if (myRun !== runGen.current || !bmp.current) return;
+       ctx.save();
+       ctx.beginPath();
+       ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+@@ -67,12 +70,14 @@ export default function CircleCrop() {
+         ctx.stroke();
+       }
+       const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
++      if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+     } catch (err) {
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not create the circle crop.");
+     } finally {
+-      setBusy(false);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [nat, ring]);
+ 
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+index 22d19e9..238e3fd 100644
+--- a/components/MetadataRemover.tsx
++++ b/components/MetadataRemover.tsx
+@@ -19,6 +19,7 @@ export default function MetadataRemover() {
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
++  const runGen = useRef(0);
+ 
+   // Bitmap release must only fire when the source image changes (new
+   // file / unmount) — tying it to `out` closed the bitmap on every
+@@ -48,6 +49,7 @@ export default function MetadataRemover() {
+ 
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
++    const myRun = ++runGen.current;
+     setBusy(true);
+     setError("");
+     try {
+@@ -56,14 +58,17 @@ export default function MetadataRemover() {
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+       if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
++      if (myRun !== runGen.current || !bmp.current) return;
+       ctx.drawImage(bmp.current, 0, 0);
+       const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     } catch (err) {
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not process this image.");
+     } finally {
+-      setBusy(false);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [nat, fmt]);
+ 
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index d318049..d3a2cfe 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -45,6 +45,7 @@ export default function ImageResizer() {
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
++  const runGen = useRef(0);
+   const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
+ 
+   // Bitmap release must only fire when the source image changes (new
+@@ -89,6 +90,7 @@ export default function ImageResizer() {
+ 
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
++    const myRun = ++runGen.current;
+     setBusy(true);
+     setError("");
+     try {
+@@ -97,14 +99,17 @@ export default function ImageResizer() {
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+       ctx.imageSmoothingQuality = "high";
++      if (myRun !== runGen.current || !bmp.current) return;
+       ctx.drawImage(bmp.current, 0, 0, w, h);
+       const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This size is too large for your browser to export. Try a smaller width/height.");
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     } catch (err) {
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not resize this image.");
+     } finally {
+-      setBusy(false);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [w, h, fmt]);
+ 
+diff --git a/components/Watermark.tsx b/components/Watermark.tsx
+index 38e4f08..47ad1e9 100644
+--- a/components/Watermark.tsx
++++ b/components/Watermark.tsx
+@@ -105,6 +105,8 @@ export default function Watermark() {
+ 
+   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
++  const runGen = useRef(0);
++  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
+   // Releasing the bitmap must NOT be tied to `out` — `out` changes on
+   // every settings tweak (live preview re-applies on each slider move),
+@@ -138,6 +140,14 @@ export default function Watermark() {
+ 
+   const run = useCallback(async () => {
+     if (!bmp.current) return;
++    // Claim this as the latest run. If another run starts before this one
++    // finishes (e.g. the user drags the opacity slider quickly, firing
++    // several settings changes back to back), this becomes stale — it
++    // must not touch shared state once superseded, or a slow/failed old
++    // run can overwrite what a newer, successful run just produced
++    // (this was the cause of a stale error appearing under a correctly
++    // watermarked preview).
++    const myRun = ++runGen.current;
+     setBusy(true);
+     setError("");
+     try {
+@@ -146,21 +156,30 @@ export default function Watermark() {
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+       if (fmt === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, nat.w, nat.h); }
++      if (myRun !== runGen.current || !bmp.current) return; // superseded before the draw
+       ctx.drawImage(bmp.current, 0, 0);
+       drawWatermark(ctx, nat.w, nat.h, settings);
+       const blob = await canvasToBlob(canvas, fmt, 0.97);
++      if (myRun !== runGen.current) return; // superseded while encoding — discard this result
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     } catch (err) {
++      if (myRun !== runGen.current) return; // superseded — a newer run already resolved this
+       setError(err instanceof Error ? err.message : "Could not watermark this image.");
+     } finally {
+-      setBusy(false);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [nat, fmt, settings]);
+ 
+-  // live preview: re-stamp whenever a new image loads or a setting changes
++  // live preview: re-stamp whenever a new image loads or a setting
++  // changes. Debounced so dragging a slider re-encodes once after you
++  // pause, not on every intermediate value — cheaper, and it also cuts
++  // down how often overlapping runs can happen in the first place.
+   useEffect(() => {
+-    if (bmp.current) run();
++    if (!bmp.current) return;
++    if (debounceTimer.current) clearTimeout(debounceTimer.current);
++    debounceTimer.current = setTimeout(() => run(), 120);
++    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [srcUrl, settings, fmt]);
+ 

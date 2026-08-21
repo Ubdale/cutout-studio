@@ -19,6 +19,7 @@ export default function MetadataRemover() {
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const runGen = useRef(0);
 
   // Bitmap release must only fire when the source image changes (new
   // file / unmount) — tying it to `out` closed the bitmap on every
@@ -48,6 +49,7 @@ export default function MetadataRemover() {
 
   const run = useCallback(async () => {
     if (!bmp.current) return;
+    const myRun = ++runGen.current;
     setBusy(true);
     setError("");
     try {
@@ -56,14 +58,17 @@ export default function MetadataRemover() {
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
       if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+      if (myRun !== runGen.current || !bmp.current) return;
       ctx.drawImage(bmp.current, 0, 0);
       const blob = await canvasToBlob(canvas, fmt, 0.97);
+      if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     } catch (err) {
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not process this image.");
     } finally {
-      setBusy(false);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [nat, fmt]);
 

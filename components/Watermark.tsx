@@ -105,6 +105,8 @@ export default function Watermark() {
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const runGen = useRef(0);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Releasing the bitmap must NOT be tied to `out` — `out` changes on
   // every settings tweak (live preview re-applies on each slider move),
@@ -138,6 +140,14 @@ export default function Watermark() {
 
   const run = useCallback(async () => {
     if (!bmp.current) return;
+    // Claim this as the latest run. If another run starts before this one
+    // finishes (e.g. the user drags the opacity slider quickly, firing
+    // several settings changes back to back), this becomes stale — it
+    // must not touch shared state once superseded, or a slow/failed old
+    // run can overwrite what a newer, successful run just produced
+    // (this was the cause of a stale error appearing under a correctly
+    // watermarked preview).
+    const myRun = ++runGen.current;
     setBusy(true);
     setError("");
     try {
@@ -146,21 +156,30 @@ export default function Watermark() {
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
       if (fmt === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+      if (myRun !== runGen.current || !bmp.current) return; // superseded before the draw
       ctx.drawImage(bmp.current, 0, 0);
       drawWatermark(ctx, nat.w, nat.h, settings);
       const blob = await canvasToBlob(canvas, fmt, 0.97);
+      if (myRun !== runGen.current) return; // superseded while encoding — discard this result
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     } catch (err) {
+      if (myRun !== runGen.current) return; // superseded — a newer run already resolved this
       setError(err instanceof Error ? err.message : "Could not watermark this image.");
     } finally {
-      setBusy(false);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [nat, fmt, settings]);
 
-  // live preview: re-stamp whenever a new image loads or a setting changes
+  // live preview: re-stamp whenever a new image loads or a setting
+  // changes. Debounced so dragging a slider re-encodes once after you
+  // pause, not on every intermediate value — cheaper, and it also cuts
+  // down how often overlapping runs can happen in the first place.
   useEffect(() => {
-    if (bmp.current) run();
+    if (!bmp.current) return;
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => run(), 120);
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcUrl, settings, fmt]);
 

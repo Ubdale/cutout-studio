@@ -17,6 +17,7 @@ export default function CircleCrop() {
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const runGen = useRef(0);
 
   // Bitmap release must only fire when the source image changes (new
   // file / unmount) — tying it to `out` closed the bitmap on every
@@ -45,6 +46,7 @@ export default function CircleCrop() {
 
   const run = useCallback(async () => {
     if (!bmp.current) return;
+    const myRun = ++runGen.current;
     setBusy(true);
     setError("");
     try {
@@ -53,6 +55,7 @@ export default function CircleCrop() {
       canvas.width = size; canvas.height = size;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
+      if (myRun !== runGen.current || !bmp.current) return;
       ctx.save();
       ctx.beginPath();
       ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
@@ -67,12 +70,14 @@ export default function CircleCrop() {
         ctx.stroke();
       }
       const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
+      if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
     } catch (err) {
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not create the circle crop.");
     } finally {
-      setBusy(false);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [nat, ring]);
 

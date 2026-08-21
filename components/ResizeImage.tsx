@@ -45,6 +45,7 @@ export default function ImageResizer() {
 
   const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const runGen = useRef(0);
   const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
 
   // Bitmap release must only fire when the source image changes (new
@@ -89,6 +90,7 @@ export default function ImageResizer() {
 
   const run = useCallback(async () => {
     if (!bmp.current) return;
+    const myRun = ++runGen.current;
     setBusy(true);
     setError("");
     try {
@@ -97,14 +99,17 @@ export default function ImageResizer() {
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
       ctx.imageSmoothingQuality = "high";
+      if (myRun !== runGen.current || !bmp.current) return;
       ctx.drawImage(bmp.current, 0, 0, w, h);
       const blob = await canvasToBlob(canvas, fmt, 0.97);
+      if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This size is too large for your browser to export. Try a smaller width/height.");
       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     } catch (err) {
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not resize this image.");
     } finally {
-      setBusy(false);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [w, h, fmt]);
 
