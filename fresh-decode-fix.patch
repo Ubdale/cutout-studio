@@ -1,0 +1,606 @@
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+index ac8dbe8..25aceb0 100644
+--- a/components/CircleCrop.tsx
++++ b/components/CircleCrop.tsx
+@@ -15,29 +15,28 @@ export default function CircleCrop() {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The File is the source of truth — each run decodes its own throwaway
++  // bitmap rather than reusing one held in a ref. A long-lived bitmap
++  // shared across renders/settings changes proved fragile ("image source
++  // is detached"); decoding fresh every time removes that whole bug
++  // class, matching the pattern bulk mode already used successfully.
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const runGen = useRef(0);
+ 
+-  // Bitmap release must only fire when the source image changes (new
+-  // file / unmount) — tying it to `out` closed the bitmap on every
+-  // re-run of the ring/size controls, breaking the next draw with
+-  // "image source is detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+-
+   useEffect(() => () => {
+     if (out) URL.revokeObjectURL(out);
+   }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    setNat(sourceSize(decoded));
++    fileRef.current = file;
++    const probe = await decode(file);
++    setNat(sourceSize(probe));
++    release(probe);
+     setName(file.name);
+     setError("");
+     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+@@ -45,22 +44,26 @@ export default function CircleCrop() {
+   }, []);
+ 
+   const run = useCallback(async () => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
+     const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
++    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
+-      const size = Math.min(nat.w, nat.h);
++      bmp = await decode(file);
++      if (myRun !== runGen.current) return;
++      const { w, h } = sourceSize(bmp);
++      const size = Math.min(w, h);
+       const canvas = document.createElement("canvas");
+       canvas.width = size; canvas.height = size;
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+-      if (myRun !== runGen.current || !bmp.current) return;
+       ctx.save();
+       ctx.beginPath();
+       ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+       ctx.clip();
+-      ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
++      ctx.drawImage(bmp, (w - size) / 2, (h - size) / 2, size, size, 0, 0, size, size);
+       ctx.restore();
+       if (ring > 0) {
+         ctx.lineWidth = ring;
+@@ -77,16 +80,17 @@ export default function CircleCrop() {
+       if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not create the circle crop.");
+     } finally {
++      release(bmp);
+       if (myRun === runGen.current) setBusy(false);
+     }
+-  }, [nat, ring]);
++  }, [ring]);
+ 
+   const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+diff --git a/components/CropImage.tsx b/components/CropImage.tsx
+index d3003a4..750dcc8 100644
+--- a/components/CropImage.tsx
++++ b/components/CropImage.tsx
+@@ -27,24 +27,27 @@ export default function CropImage() {
+   const [error, setError] = useState("");
+   const [, tick] = useState(0);
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The File is the source of truth — download decodes its own throwaway
++  // bitmap rather than reusing one held in a ref, which proved fragile
++  // across repeated downloads ("image source is detached").
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const stageRef = useRef<HTMLDivElement>(null);
+   const box = useRef<Box>({ x: 0, y: 0, w: 0, h: 0 });
+   const drag = useRef<{ mode: string; sx: number; sy: number; start: Box; scale: number } | null>(null);
++  const runGen = useRef(0);
+   const rerender = () => tick((n) => n + 1);
+ 
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    const s = sourceSize(decoded);
++    fileRef.current = file;
++    const probe = await decode(file);
++    const s = sourceSize(probe);
++    release(probe);
+     setNat(s);
+     // start with an 80% centered box
+     const w = s.w * 0.8, h = s.h * 0.8;
+@@ -114,33 +117,41 @@ export default function CropImage() {
+   const onUp = () => { drag.current = null; };
+ 
+   const download = useCallback(async () => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
++    const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
++    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
++      bmp = await decode(file);
++      if (myRun !== runGen.current) return;
+       const b = box.current;
+       const canvas = document.createElement("canvas");
+       canvas.width = Math.round(b.w);
+       canvas.height = Math.round(b.h);
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+-      ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
++      ctx.drawImage(bmp, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+       const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+       const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
++      if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
+       setTimeout(() => URL.revokeObjectURL(url), 4000);
+     } catch (err) {
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not export this image.");
+     } finally {
+-      setBusy(false);
++      release(bmp);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [name]);
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+diff --git a/components/MetadataRemover.tsx b/components/MetadataRemover.tsx
+index 238e3fd..c10f388 100644
+--- a/components/MetadataRemover.tsx
++++ b/components/MetadataRemover.tsx
+@@ -17,28 +17,28 @@ export default function MetadataRemover() {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The File is the source of truth — each run decodes its own throwaway
++  // bitmap rather than reusing one held in a ref. A long-lived bitmap
++  // shared across renders/settings changes proved fragile ("image source
++  // is detached"); decoding fresh every time removes that whole bug
++  // class, matching the pattern bulk mode already used successfully.
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const runGen = useRef(0);
+ 
+-  // Bitmap release must only fire when the source image changes (new
+-  // file / unmount) — tying it to `out` closed the bitmap on every
+-  // re-run, breaking the next draw with "image source is detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+-
+   useEffect(() => () => {
+     if (out) URL.revokeObjectURL(out.url);
+   }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    setNat(sourceSize(decoded));
++    fileRef.current = file;
++    const probe = await decode(file);
++    setNat(sourceSize(probe));
++    release(probe);
+     setSrcSize(file.size);
+     setName(file.name);
+     setFmt(outputFmt(file.type));
+@@ -48,18 +48,22 @@ export default function MetadataRemover() {
+   }, []);
+ 
+   const run = useCallback(async () => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
+     const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
++    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
++      bmp = await decode(file);
++      if (myRun !== runGen.current) return;
++      const { w, h } = sourceSize(bmp);
+       const canvas = document.createElement("canvas");
+-      canvas.width = nat.w; canvas.height = nat.h;
++      canvas.width = w; canvas.height = h;
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+-      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+-      if (myRun !== runGen.current || !bmp.current) return;
+-      ctx.drawImage(bmp.current, 0, 0);
++      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h); }
++      ctx.drawImage(bmp, 0, 0);
+       const blob = await canvasToBlob(canvas, fmt, 0.97);
+       if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+@@ -68,9 +72,10 @@ export default function MetadataRemover() {
+       if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not process this image.");
+     } finally {
++      release(bmp);
+       if (myRun === runGen.current) setBusy(false);
+     }
+-  }, [nat, fmt]);
++  }, [fmt]);
+ 
+   const download = () => {
+     if (!out) return;
+@@ -80,7 +85,7 @@ export default function MetadataRemover() {
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out.url);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+diff --git a/components/ResizeImage.tsx b/components/ResizeImage.tsx
+index d3a2cfe..31f4fdf 100644
+--- a/components/ResizeImage.tsx
++++ b/components/ResizeImage.tsx
+@@ -43,30 +43,29 @@ export default function ImageResizer() {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The File is the source of truth — each run decodes its own throwaway
++  // bitmap rather than reusing one held in a ref. A long-lived bitmap
++  // shared across renders/settings changes proved fragile ("image source
++  // is detached"); decoding fresh every time removes that whole bug
++  // class, matching the pattern bulk mode already used successfully.
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const runGen = useRef(0);
+   const ratio = nat.w && nat.h ? nat.w / nat.h : 1;
+ 
+-  // Bitmap release must only fire when the source image changes (new
+-  // file / unmount) — tying it to `out` closed the bitmap after the
+-  // first resize, breaking every resize after it with "image source is
+-  // detached".
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+-
+   useEffect(() => () => {
+     if (out) URL.revokeObjectURL(out.url);
+   }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    const s = sourceSize(decoded);
++    fileRef.current = file;
++    const probe = await decode(file);
++    const s = sourceSize(probe);
++    release(probe);
+     setNat(s); setW(s.w); setH(s.h);
+     setName(file.name);
+     setFmt(outputFmt(file.type));
+@@ -89,18 +88,21 @@ export default function ImageResizer() {
+   };
+ 
+   const run = useCallback(async () => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
+     const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
++    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
++      bmp = await decode(file);
++      if (myRun !== runGen.current) return;
+       const canvas = document.createElement("canvas");
+       canvas.width = w; canvas.height = h;
+       const ctx = canvas.getContext("2d");
+       if (!ctx) throw new Error("Could not create a canvas context");
+       ctx.imageSmoothingQuality = "high";
+-      if (myRun !== runGen.current || !bmp.current) return;
+-      ctx.drawImage(bmp.current, 0, 0, w, h);
++      ctx.drawImage(bmp, 0, 0, w, h);
+       const blob = await canvasToBlob(canvas, fmt, 0.97);
+       if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This size is too large for your browser to export. Try a smaller width/height.");
+@@ -109,6 +111,7 @@ export default function ImageResizer() {
+       if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not resize this image.");
+     } finally {
++      release(bmp);
+       if (myRun === runGen.current) setBusy(false);
+     }
+   }, [w, h, fmt]);
+@@ -121,7 +124,7 @@ export default function ImageResizer() {
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out.url);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+diff --git a/components/RotateImage.tsx b/components/RotateImage.tsx
+index 5598681..9ee8ee3 100644
+--- a/components/RotateImage.tsx
++++ b/components/RotateImage.tsx
+@@ -17,20 +17,23 @@ export default function ImageRotator() {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The File is the source of truth — each download decodes its own
++  // throwaway bitmap rather than reusing one held in a ref, which proved
++  // fragile across repeated downloads ("image source is detached").
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
++  const runGen = useRef(0);
+ 
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    setNat(sourceSize(decoded));
++    fileRef.current = file;
++    const probe = await decode(file);
++    setNat(sourceSize(probe));
++    release(probe);
+     setName(file.name);
+     setDeg(0); setFlipH(false); setFlipV(false);
+     setError("");
+@@ -38,14 +41,19 @@ export default function ImageRotator() {
+   }, []);
+ 
+   const download = useCallback(async () => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
++    const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
+     // try/finally guarantees the button never gets stuck on "Working…" —
+-    // without this, any failure here (huge canvas allocation, a detached
+-    // bitmap, an out-of-memory toBlob) left busy stuck true forever with
+-    // no download and no error, which looked like a permanent hang.
++    // without this, any failure here (huge canvas allocation, an
++    // out-of-memory toBlob) left busy stuck true forever with no download
++    // and no error, which looked like a permanent hang.
++    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
++      bmp = await decode(file);
++      if (myRun !== runGen.current) return;
+       const rad = (deg * Math.PI) / 180;
+       const swap = deg % 180 !== 0;
+       const canvas = document.createElement("canvas");
+@@ -57,24 +65,27 @@ export default function ImageRotator() {
+       ctx.translate(canvas.width / 2, canvas.height / 2);
+       ctx.rotate(rad);
+       ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+-      ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
++      ctx.drawImage(bmp, -nat.w / 2, -nat.h / 2);
+       ctx.restore();
+       const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
+       const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
++      if (myRun !== runGen.current) return;
+       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+       const url = URL.createObjectURL(blob);
+       triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
+       setTimeout(() => URL.revokeObjectURL(url), 4000);
+     } catch (err) {
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not export this image.");
+     } finally {
+-      setBusy(false);
++      release(bmp);
++      if (myRun === runGen.current) setBusy(false);
+     }
+   }, [deg, flipH, flipV, nat, name]);
+ 
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+diff --git a/components/Watermark.tsx b/components/Watermark.tsx
+index 47ad1e9..4cf6300 100644
+--- a/components/Watermark.tsx
++++ b/components/Watermark.tsx
+@@ -58,7 +58,16 @@ function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, s: W
+   ctx.restore();
+ }
+ 
+-async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promise<Blob> {
++// Decodes a throwaway bitmap, draws + watermarks it, and closes it again —
++// every call owns its own bitmap for its own brief lifetime. This is the
++// same pattern bulk mode already used (a fresh decode per file inside each
++// worker task), which is why bulk mode never hit the "detached" bug that
++// the single-image path did: a bitmap kept alive across renders/settings
++// changes in a ref could be closed or otherwise invalidated by something
++// else touching the same ref before this call got to use it. Decoding
++// fresh every time removes that whole class of bug — nothing else can
++// ever hold or close *this* bitmap.
++async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promise<{ blob: Blob; w: number; h: number }> {
+   const bmp = await decode(file);
+   try {
+     const { w, h } = sourceSize(bmp);
+@@ -74,8 +83,8 @@ async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promis
+     ctx.drawImage(bmp, 0, 0);
+     drawWatermark(ctx, w, h, s);
+     const blob = await canvasToBlob(canvas, fmt, 0.97);
+-    if (!blob) throw new Error("Too large for your browser to export");
+-    return blob;
++    if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++    return { blob, w, h };
+   } finally {
+     release(bmp);
+   }
+@@ -103,34 +112,28 @@ export default function Watermark() {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
++  // The source of truth is the File itself, not a decoded bitmap — see
++  // the comment on watermarkFile() for why.
++  const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const runGen = useRef(0);
+   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
+-  // Releasing the bitmap must NOT be tied to `out` — `out` changes on
+-  // every settings tweak (live preview re-applies on each slider move),
+-  // and running this cleanup on every one of those closed the bitmap
+-  // mid-session, breaking the very next draw with "image source is
+-  // detached". It should only fire when the source image itself changes
+-  // (a new file, or the component unmounting).
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+-    release(bmp.current);
+   }, [srcUrl]);
+-
+-  // Revoking the previous output URL is independent of the bitmap and
+-  // safe to run on every new result.
+   useEffect(() => () => {
+     if (out) URL.revokeObjectURL(out.url);
+   }, [out]);
+ 
+   const handleFile = useCallback(async (file: File) => {
+     if (!file.type.startsWith("image/")) return;
+-    release(bmp.current);
+-    const decoded = await decode(file);
+-    bmp.current = decoded;
+-    setNat(sourceSize(decoded));
++    fileRef.current = file;
++    // decode once just to read dimensions for the UI, then let it go —
++    // this is not the bitmap that gets drawn later
++    const probe = await decode(file);
++    setNat(sourceSize(probe));
++    release(probe);
+     setName(file.name);
+     setFmt(outputFmt(file.type));
+     setError("");
+@@ -139,44 +142,31 @@ export default function Watermark() {
+   }, []);
+ 
+   const run = useCallback(async () => {
+-    if (!bmp.current) return;
+-    // Claim this as the latest run. If another run starts before this one
+-    // finishes (e.g. the user drags the opacity slider quickly, firing
+-    // several settings changes back to back), this becomes stale — it
+-    // must not touch shared state once superseded, or a slow/failed old
+-    // run can overwrite what a newer, successful run just produced
+-    // (this was the cause of a stale error appearing under a correctly
+-    // watermarked preview).
++    if (!fileRef.current) return;
++    // Claim this as the latest run so a slower/failed older run (from
++    // rapid slider dragging) can never overwrite what a newer one already
++    // produced.
+     const myRun = ++runGen.current;
++    const file = fileRef.current;
+     setBusy(true);
+     setError("");
+     try {
+-      const canvas = document.createElement("canvas");
+-      canvas.width = nat.w; canvas.height = nat.h;
+-      const ctx = canvas.getContext("2d");
+-      if (!ctx) throw new Error("Could not create a canvas context");
+-      if (fmt === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, nat.w, nat.h); }
+-      if (myRun !== runGen.current || !bmp.current) return; // superseded before the draw
+-      ctx.drawImage(bmp.current, 0, 0);
+-      drawWatermark(ctx, nat.w, nat.h, settings);
+-      const blob = await canvasToBlob(canvas, fmt, 0.97);
+-      if (myRun !== runGen.current) return; // superseded while encoding — discard this result
+-      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++      const { blob } = await watermarkFile(file, settings, fmt);
++      if (myRun !== runGen.current) return; // superseded — discard
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
+     } catch (err) {
+-      if (myRun !== runGen.current) return; // superseded — a newer run already resolved this
++      if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not watermark this image.");
+     } finally {
+       if (myRun === runGen.current) setBusy(false);
+     }
+-  }, [nat, fmt, settings]);
++  }, [settings, fmt]);
+ 
+   // live preview: re-stamp whenever a new image loads or a setting
+   // changes. Debounced so dragging a slider re-encodes once after you
+-  // pause, not on every intermediate value — cheaper, and it also cuts
+-  // down how often overlapping runs can happen in the first place.
++  // pause, not on every intermediate value.
+   useEffect(() => {
+-    if (!bmp.current) return;
++    if (!fileRef.current) return;
+     if (debounceTimer.current) clearTimeout(debounceTimer.current);
+     debounceTimer.current = setTimeout(() => run(), 120);
+     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+@@ -191,7 +181,7 @@ export default function Watermark() {
+   const reset = () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+     if (out) URL.revokeObjectURL(out.url);
+-    release(bmp.current); bmp.current = null;
++    fileRef.current = null;
+     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
+     if (inputRef.current) inputRef.current.value = "";
+   };
+@@ -199,7 +189,7 @@ export default function Watermark() {
+   const bulkProcess = useCallback(
+     async (file: File): Promise<BulkResult> => {
+       const detected = outputFmt(file.type);
+-      const blob = await watermarkFile(file, settings, detected);
++      const { blob } = await watermarkFile(file, settings, detected);
+       return { blob, ext: FMT_EXT[detected] };
+     },
+     [settings]
+@@ -207,7 +197,6 @@ export default function Watermark() {
+ 
+   const set = <K extends keyof WatermarkSettings>(key: K, value: WatermarkSettings[K]) => {
+     setSettings((s) => ({ ...s, [key]: value }));
+-    setOut(null);
+   };
+ 
+   const controls = (

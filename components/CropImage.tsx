@@ -27,24 +27,27 @@ export default function CropImage() {
   const [error, setError] = useState("");
   const [, tick] = useState(0);
 
-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  // The File is the source of truth — download decodes its own throwaway
+  // bitmap rather than reusing one held in a ref, which proved fragile
+  // across repeated downloads ("image source is detached").
+  const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const box = useRef<Box>({ x: 0, y: 0, w: 0, h: 0 });
   const drag = useRef<{ mode: string; sx: number; sy: number; start: Box; scale: number } | null>(null);
+  const runGen = useRef(0);
   const rerender = () => tick((n) => n + 1);
 
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current);
   }, [srcUrl]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
-    release(bmp.current);
-    const decoded = await decode(file);
-    bmp.current = decoded;
-    const s = sourceSize(decoded);
+    fileRef.current = file;
+    const probe = await decode(file);
+    const s = sourceSize(probe);
+    release(probe);
     setNat(s);
     // start with an 80% centered box
     const w = s.w * 0.8, h = s.h * 0.8;
@@ -114,33 +117,41 @@ export default function CropImage() {
   const onUp = () => { drag.current = null; };
 
   const download = useCallback(async () => {
-    if (!bmp.current) return;
+    if (!fileRef.current) return;
+    const myRun = ++runGen.current;
+    const file = fileRef.current;
     setBusy(true);
     setError("");
+    let bmp: ImageBitmap | HTMLImageElement | null = null;
     try {
+      bmp = await decode(file);
+      if (myRun !== runGen.current) return;
       const b = box.current;
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(b.w);
       canvas.height = Math.round(b.h);
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
-      ctx.drawImage(bmp.current, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
       const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
       const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+      if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `${baseName(name)}-cropped.${FMT_EXT[outputFmt(fmt)]}`);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (err) {
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not export this image.");
     } finally {
-      setBusy(false);
+      release(bmp);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [name]);
 
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current); bmp.current = null;
+    fileRef.current = null;
     setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };

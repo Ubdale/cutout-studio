@@ -58,7 +58,16 @@ function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, s: W
   ctx.restore();
 }
 
-async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promise<Blob> {
+// Decodes a throwaway bitmap, draws + watermarks it, and closes it again —
+// every call owns its own bitmap for its own brief lifetime. This is the
+// same pattern bulk mode already used (a fresh decode per file inside each
+// worker task), which is why bulk mode never hit the "detached" bug that
+// the single-image path did: a bitmap kept alive across renders/settings
+// changes in a ref could be closed or otherwise invalidated by something
+// else touching the same ref before this call got to use it. Decoding
+// fresh every time removes that whole class of bug — nothing else can
+// ever hold or close *this* bitmap.
+async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promise<{ blob: Blob; w: number; h: number }> {
   const bmp = await decode(file);
   try {
     const { w, h } = sourceSize(bmp);
@@ -74,8 +83,8 @@ async function watermarkFile(file: File, s: WatermarkSettings, fmt: Fmt): Promis
     ctx.drawImage(bmp, 0, 0);
     drawWatermark(ctx, w, h, s);
     const blob = await canvasToBlob(canvas, fmt, 0.97);
-    if (!blob) throw new Error("Too large for your browser to export");
-    return blob;
+    if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+    return { blob, w, h };
   } finally {
     release(bmp);
   }
@@ -103,34 +112,28 @@ export default function Watermark() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  // The source of truth is the File itself, not a decoded bitmap — see
+  // the comment on watermarkFile() for why.
+  const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const runGen = useRef(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Releasing the bitmap must NOT be tied to `out` — `out` changes on
-  // every settings tweak (live preview re-applies on each slider move),
-  // and running this cleanup on every one of those closed the bitmap
-  // mid-session, breaking the very next draw with "image source is
-  // detached". It should only fire when the source image itself changes
-  // (a new file, or the component unmounting).
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current);
   }, [srcUrl]);
-
-  // Revoking the previous output URL is independent of the bitmap and
-  // safe to run on every new result.
   useEffect(() => () => {
     if (out) URL.revokeObjectURL(out.url);
   }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
-    release(bmp.current);
-    const decoded = await decode(file);
-    bmp.current = decoded;
-    setNat(sourceSize(decoded));
+    fileRef.current = file;
+    // decode once just to read dimensions for the UI, then let it go —
+    // this is not the bitmap that gets drawn later
+    const probe = await decode(file);
+    setNat(sourceSize(probe));
+    release(probe);
     setName(file.name);
     setFmt(outputFmt(file.type));
     setError("");
@@ -139,44 +142,31 @@ export default function Watermark() {
   }, []);
 
   const run = useCallback(async () => {
-    if (!bmp.current) return;
-    // Claim this as the latest run. If another run starts before this one
-    // finishes (e.g. the user drags the opacity slider quickly, firing
-    // several settings changes back to back), this becomes stale — it
-    // must not touch shared state once superseded, or a slow/failed old
-    // run can overwrite what a newer, successful run just produced
-    // (this was the cause of a stale error appearing under a correctly
-    // watermarked preview).
+    if (!fileRef.current) return;
+    // Claim this as the latest run so a slower/failed older run (from
+    // rapid slider dragging) can never overwrite what a newer one already
+    // produced.
     const myRun = ++runGen.current;
+    const file = fileRef.current;
     setBusy(true);
     setError("");
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = nat.w; canvas.height = nat.h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Could not create a canvas context");
-      if (fmt === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, nat.w, nat.h); }
-      if (myRun !== runGen.current || !bmp.current) return; // superseded before the draw
-      ctx.drawImage(bmp.current, 0, 0);
-      drawWatermark(ctx, nat.w, nat.h, settings);
-      const blob = await canvasToBlob(canvas, fmt, 0.97);
-      if (myRun !== runGen.current) return; // superseded while encoding — discard this result
-      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
+      const { blob } = await watermarkFile(file, settings, fmt);
+      if (myRun !== runGen.current) return; // superseded — discard
       setOut((prev) => { if (prev) URL.revokeObjectURL(prev.url); return { url: URL.createObjectURL(blob), size: blob.size }; });
     } catch (err) {
-      if (myRun !== runGen.current) return; // superseded — a newer run already resolved this
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not watermark this image.");
     } finally {
       if (myRun === runGen.current) setBusy(false);
     }
-  }, [nat, fmt, settings]);
+  }, [settings, fmt]);
 
   // live preview: re-stamp whenever a new image loads or a setting
   // changes. Debounced so dragging a slider re-encodes once after you
-  // pause, not on every intermediate value — cheaper, and it also cuts
-  // down how often overlapping runs can happen in the first place.
+  // pause, not on every intermediate value.
   useEffect(() => {
-    if (!bmp.current) return;
+    if (!fileRef.current) return;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => run(), 120);
     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
@@ -191,7 +181,7 @@ export default function Watermark() {
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out.url);
-    release(bmp.current); bmp.current = null;
+    fileRef.current = null;
     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
@@ -199,7 +189,7 @@ export default function Watermark() {
   const bulkProcess = useCallback(
     async (file: File): Promise<BulkResult> => {
       const detected = outputFmt(file.type);
-      const blob = await watermarkFile(file, settings, detected);
+      const { blob } = await watermarkFile(file, settings, detected);
       return { blob, ext: FMT_EXT[detected] };
     },
     [settings]
@@ -207,7 +197,6 @@ export default function Watermark() {
 
   const set = <K extends keyof WatermarkSettings>(key: K, value: WatermarkSettings[K]) => {
     setSettings((s) => ({ ...s, [key]: value }));
-    setOut(null);
   };
 
   const controls = (

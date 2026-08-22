@@ -17,20 +17,23 @@ export default function ImageRotator() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  // The File is the source of truth — each download decodes its own
+  // throwaway bitmap rather than reusing one held in a ref, which proved
+  // fragile across repeated downloads ("image source is detached").
+  const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const runGen = useRef(0);
 
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current);
   }, [srcUrl]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
-    release(bmp.current);
-    const decoded = await decode(file);
-    bmp.current = decoded;
-    setNat(sourceSize(decoded));
+    fileRef.current = file;
+    const probe = await decode(file);
+    setNat(sourceSize(probe));
+    release(probe);
     setName(file.name);
     setDeg(0); setFlipH(false); setFlipV(false);
     setError("");
@@ -38,14 +41,19 @@ export default function ImageRotator() {
   }, []);
 
   const download = useCallback(async () => {
-    if (!bmp.current) return;
+    if (!fileRef.current) return;
+    const myRun = ++runGen.current;
+    const file = fileRef.current;
     setBusy(true);
     setError("");
     // try/finally guarantees the button never gets stuck on "Working…" —
-    // without this, any failure here (huge canvas allocation, a detached
-    // bitmap, an out-of-memory toBlob) left busy stuck true forever with
-    // no download and no error, which looked like a permanent hang.
+    // without this, any failure here (huge canvas allocation, an
+    // out-of-memory toBlob) left busy stuck true forever with no download
+    // and no error, which looked like a permanent hang.
+    let bmp: ImageBitmap | HTMLImageElement | null = null;
     try {
+      bmp = await decode(file);
+      if (myRun !== runGen.current) return;
       const rad = (deg * Math.PI) / 180;
       const swap = deg % 180 !== 0;
       const canvas = document.createElement("canvas");
@@ -57,24 +65,27 @@ export default function ImageRotator() {
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate(rad);
       ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-      ctx.drawImage(bmp.current, -nat.w / 2, -nat.h / 2);
+      ctx.drawImage(bmp, -nat.w / 2, -nat.h / 2);
       ctx.restore();
       const fmt = name.match(/\.jpe?g$/i) ? "image/jpeg" : name.match(/\.webp$/i) ? "image/webp" : "image/png";
       const blob = await canvasToBlob(canvas, outputFmt(fmt), 0.97);
+      if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
       const url = URL.createObjectURL(blob);
       triggerDownload(url, `${baseName(name)}-rotated.${FMT_EXT[outputFmt(fmt)]}`);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (err) {
+      if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not export this image.");
     } finally {
-      setBusy(false);
+      release(bmp);
+      if (myRun === runGen.current) setBusy(false);
     }
   }, [deg, flipH, flipV, nat, name]);
 
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current); bmp.current = null;
+    fileRef.current = null;
     setSrcUrl(null); setName(""); setNat({ w: 0, h: 0 }); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };

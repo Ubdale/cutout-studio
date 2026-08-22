@@ -15,29 +15,28 @@ export default function CircleCrop() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  // The File is the source of truth — each run decodes its own throwaway
+  // bitmap rather than reusing one held in a ref. A long-lived bitmap
+  // shared across renders/settings changes proved fragile ("image source
+  // is detached"); decoding fresh every time removes that whole bug
+  // class, matching the pattern bulk mode already used successfully.
+  const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const runGen = useRef(0);
 
-  // Bitmap release must only fire when the source image changes (new
-  // file / unmount) — tying it to `out` closed the bitmap on every
-  // re-run of the ring/size controls, breaking the next draw with
-  // "image source is detached".
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current);
   }, [srcUrl]);
-
   useEffect(() => () => {
     if (out) URL.revokeObjectURL(out);
   }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
-    release(bmp.current);
-    const decoded = await decode(file);
-    bmp.current = decoded;
-    setNat(sourceSize(decoded));
+    fileRef.current = file;
+    const probe = await decode(file);
+    setNat(sourceSize(probe));
+    release(probe);
     setName(file.name);
     setError("");
     setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
@@ -45,22 +44,26 @@ export default function CircleCrop() {
   }, []);
 
   const run = useCallback(async () => {
-    if (!bmp.current) return;
+    if (!fileRef.current) return;
     const myRun = ++runGen.current;
+    const file = fileRef.current;
     setBusy(true);
     setError("");
+    let bmp: ImageBitmap | HTMLImageElement | null = null;
     try {
-      const size = Math.min(nat.w, nat.h);
+      bmp = await decode(file);
+      if (myRun !== runGen.current) return;
+      const { w, h } = sourceSize(bmp);
+      const size = Math.min(w, h);
       const canvas = document.createElement("canvas");
       canvas.width = size; canvas.height = size;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
-      if (myRun !== runGen.current || !bmp.current) return;
       ctx.save();
       ctx.beginPath();
       ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
       ctx.clip();
-      ctx.drawImage(bmp.current, (nat.w - size) / 2, (nat.h - size) / 2, size, size, 0, 0, size, size);
+      ctx.drawImage(bmp, (w - size) / 2, (h - size) / 2, size, size, 0, 0, size, size);
       ctx.restore();
       if (ring > 0) {
         ctx.lineWidth = ring;
@@ -77,16 +80,17 @@ export default function CircleCrop() {
       if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not create the circle crop.");
     } finally {
+      release(bmp);
       if (myRun === runGen.current) setBusy(false);
     }
-  }, [nat, ring]);
+  }, [ring]);
 
   const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
 
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out);
-    release(bmp.current); bmp.current = null;
+    fileRef.current = null;
     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setRing(0); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };

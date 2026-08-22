@@ -17,28 +17,28 @@ export default function MetadataRemover() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const bmp = useRef<ImageBitmap | HTMLImageElement | null>(null);
+  // The File is the source of truth — each run decodes its own throwaway
+  // bitmap rather than reusing one held in a ref. A long-lived bitmap
+  // shared across renders/settings changes proved fragile ("image source
+  // is detached"); decoding fresh every time removes that whole bug
+  // class, matching the pattern bulk mode already used successfully.
+  const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const runGen = useRef(0);
 
-  // Bitmap release must only fire when the source image changes (new
-  // file / unmount) — tying it to `out` closed the bitmap on every
-  // re-run, breaking the next draw with "image source is detached".
   useEffect(() => () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
-    release(bmp.current);
   }, [srcUrl]);
-
   useEffect(() => () => {
     if (out) URL.revokeObjectURL(out.url);
   }, [out]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
-    release(bmp.current);
-    const decoded = await decode(file);
-    bmp.current = decoded;
-    setNat(sourceSize(decoded));
+    fileRef.current = file;
+    const probe = await decode(file);
+    setNat(sourceSize(probe));
+    release(probe);
     setSrcSize(file.size);
     setName(file.name);
     setFmt(outputFmt(file.type));
@@ -48,18 +48,22 @@ export default function MetadataRemover() {
   }, []);
 
   const run = useCallback(async () => {
-    if (!bmp.current) return;
+    if (!fileRef.current) return;
     const myRun = ++runGen.current;
+    const file = fileRef.current;
     setBusy(true);
     setError("");
+    let bmp: ImageBitmap | HTMLImageElement | null = null;
     try {
+      bmp = await decode(file);
+      if (myRun !== runGen.current) return;
+      const { w, h } = sourceSize(bmp);
       const canvas = document.createElement("canvas");
-      canvas.width = nat.w; canvas.height = nat.h;
+      canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Could not create a canvas context");
-      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, nat.w, nat.h); }
-      if (myRun !== runGen.current || !bmp.current) return;
-      ctx.drawImage(bmp.current, 0, 0);
+      if (fmt === "image/jpeg") { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h); }
+      ctx.drawImage(bmp, 0, 0);
       const blob = await canvasToBlob(canvas, fmt, 0.97);
       if (myRun !== runGen.current) return;
       if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
@@ -68,9 +72,10 @@ export default function MetadataRemover() {
       if (myRun !== runGen.current) return;
       setError(err instanceof Error ? err.message : "Could not process this image.");
     } finally {
+      release(bmp);
       if (myRun === runGen.current) setBusy(false);
     }
-  }, [nat, fmt]);
+  }, [fmt]);
 
   const download = () => {
     if (!out) return;
@@ -80,7 +85,7 @@ export default function MetadataRemover() {
   const reset = () => {
     if (srcUrl) URL.revokeObjectURL(srcUrl);
     if (out) URL.revokeObjectURL(out.url);
-    release(bmp.current); bmp.current = null;
+    fileRef.current = null;
     setSrcUrl(null); setOut(null); setName(""); setNat({ w: 0, h: 0 }); setSrcSize(0); setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
