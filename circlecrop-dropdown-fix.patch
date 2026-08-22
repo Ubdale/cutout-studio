@@ -1,0 +1,242 @@
+diff --git a/app/globals.css b/app/globals.css
+index 73f8ede..c559903 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -546,12 +546,33 @@ button {
+   color: var(--ink);
+   font-size: 14px;
+   font-weight: 500;
++  transition: border-color 0.15s ease, background 0.15s ease;
++}
++.ctrl select {
++  appearance: none;
++  -webkit-appearance: none;
++  cursor: pointer;
++  padding-right: 38px;
++  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3e%3cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
++  background-repeat: no-repeat;
++  background-position: right 14px center;
++}
++.ctrl select:hover {
++  border-color: var(--muted);
++}
++.ctrl select option {
++  color: var(--ink);
++  background: var(--surface);
++  padding: 8px;
+ }
+ .ctrl select:focus,
+ .ctrl input[type="text"]:focus {
+   outline: none;
+   border-color: var(--accent);
+ }
++.convert-to {
++  padding: 0 6px 12px;
++}
+ .ctrl input[type="color"] {
+   width: 100%;
+   height: 40px;
+diff --git a/components/CircleCrop.tsx b/components/CircleCrop.tsx
+index 25aceb0..36f157f 100644
+--- a/components/CircleCrop.tsx
++++ b/components/CircleCrop.tsx
+@@ -5,6 +5,44 @@ import {
+   decode, sourceSize, release, canvasToBlob, triggerDownload, baseName,
+ } from "@/lib/image";
+ 
++// Renders the exact same circular crop used for both the live preview and
++// the final download — previously the preview faked circularity with a
++// CSS border-radius on the plain rectangular image, which only visually
++// clipped whatever crop the browser's object-fit happened to pick. That
++// didn't necessarily match the canvas math below (centered square crop,
++// then an arc clip), so what you saw before clicking "download" could
++// differ from what you actually got. Now the preview *is* this function's
++// output, so there's nothing to get out of sync.
++async function circleCropFile(file: File, ring: number): Promise<{ blob: Blob; size: number }> {
++  const bmp = await decode(file);
++  try {
++    const { w, h } = sourceSize(bmp);
++    const size = Math.min(w, h);
++    const canvas = document.createElement("canvas");
++    canvas.width = size; canvas.height = size;
++    const ctx = canvas.getContext("2d");
++    if (!ctx) throw new Error("Could not create a canvas context");
++    ctx.save();
++    ctx.beginPath();
++    ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
++    ctx.clip();
++    ctx.drawImage(bmp, (w - size) / 2, (h - size) / 2, size, size, 0, 0, size, size);
++    ctx.restore();
++    if (ring > 0) {
++      ctx.lineWidth = ring;
++      ctx.strokeStyle = "#ffffff";
++      ctx.beginPath();
++      ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
++      ctx.stroke();
++    }
++    const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
++    if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++    return { blob, size };
++  } finally {
++    release(bmp);
++  }
++}
++
+ export default function CircleCrop() {
+   const [over, setOver] = useState(false);
+   const [srcUrl, setSrcUrl] = useState<string | null>(null);
+@@ -16,13 +54,12 @@ export default function CircleCrop() {
+   const [error, setError] = useState("");
+ 
+   // The File is the source of truth — each run decodes its own throwaway
+-  // bitmap rather than reusing one held in a ref. A long-lived bitmap
+-  // shared across renders/settings changes proved fragile ("image source
+-  // is detached"); decoding fresh every time removes that whole bug
+-  // class, matching the pattern bulk mode already used successfully.
++  // bitmap rather than reusing one held in a ref (see fresh-decode notes
++  // elsewhere in this codebase for why that mattered).
+   const fileRef = useRef<File | null>(null);
+   const inputRef = useRef<HTMLInputElement>(null);
+   const runGen = useRef(0);
++  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
+   useEffect(() => () => {
+     if (srcUrl) URL.revokeObjectURL(srcUrl);
+@@ -31,60 +68,47 @@ export default function CircleCrop() {
+     if (out) URL.revokeObjectURL(out);
+   }, [out]);
+ 
+-  const handleFile = useCallback(async (file: File) => {
+-    if (!file.type.startsWith("image/")) return;
+-    fileRef.current = file;
+-    const probe = await decode(file);
+-    setNat(sourceSize(probe));
+-    release(probe);
+-    setName(file.name);
+-    setError("");
+-    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+-    setOut(null);
+-  }, []);
+-
+   const run = useCallback(async () => {
+     if (!fileRef.current) return;
+     const myRun = ++runGen.current;
+     const file = fileRef.current;
+     setBusy(true);
+     setError("");
+-    let bmp: ImageBitmap | HTMLImageElement | null = null;
+     try {
+-      bmp = await decode(file);
+-      if (myRun !== runGen.current) return;
+-      const { w, h } = sourceSize(bmp);
+-      const size = Math.min(w, h);
+-      const canvas = document.createElement("canvas");
+-      canvas.width = size; canvas.height = size;
+-      const ctx = canvas.getContext("2d");
+-      if (!ctx) throw new Error("Could not create a canvas context");
+-      ctx.save();
+-      ctx.beginPath();
+-      ctx.arc(size / 2, size / 2, size / 2 - ring, 0, Math.PI * 2);
+-      ctx.clip();
+-      ctx.drawImage(bmp, (w - size) / 2, (h - size) / 2, size, size, 0, 0, size, size);
+-      ctx.restore();
+-      if (ring > 0) {
+-        ctx.lineWidth = ring;
+-        ctx.strokeStyle = "#ffffff";
+-        ctx.beginPath();
+-        ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
+-        ctx.stroke();
+-      }
+-      const blob = await canvasToBlob(canvas, "image/png"); // PNG keeps the transparent corners
+-      if (myRun !== runGen.current) return;
+-      if (!blob) throw new Error("This image is too large for your browser to export. Try a smaller image.");
++      const { blob } = await circleCropFile(file, ring);
++      if (myRun !== runGen.current) return; // superseded by a newer run — discard
+       setOut((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+     } catch (err) {
+       if (myRun !== runGen.current) return;
+       setError(err instanceof Error ? err.message : "Could not create the circle crop.");
+     } finally {
+-      release(bmp);
+       if (myRun === runGen.current) setBusy(false);
+     }
+   }, [ring]);
+ 
++  const handleFile = useCallback(async (file: File) => {
++    if (!file.type.startsWith("image/")) return;
++    fileRef.current = file;
++    const probe = await decode(file);
++    setNat(sourceSize(probe));
++    release(probe);
++    setName(file.name);
++    setError("");
++    setSrcUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
++    setOut(null);
++  }, []);
++
++  // Live preview: re-crop whenever a new image loads or the ring width
++  // changes. Debounced so dragging the slider re-encodes once after you
++  // pause, not on every intermediate value.
++  useEffect(() => {
++    if (!fileRef.current) return;
++    if (debounceTimer.current) clearTimeout(debounceTimer.current);
++    debounceTimer.current = setTimeout(() => run(), 120);
++    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [srcUrl, ring]);
++
+   const download = () => { if (out) triggerDownload(out, `${baseName(name)}-circle.png`); };
+ 
+   const reset = () => {
+@@ -117,27 +141,30 @@ export default function CircleCrop() {
+         <div className="stage">
+           <div className="meta mono">
+             <span>{name}</span><span className="dot" /><span>{nat.w}×{nat.h}</span>
+-            {out && (<><span className="dot" /><span>→ {Math.min(nat.w, nat.h)}×{Math.min(nat.w, nat.h)} PNG</span></>)}
++            <span className="dot" /><span>→ {Math.min(nat.w, nat.h)}×{Math.min(nat.w, nat.h)} PNG</span>
+           </div>
+ 
+           <div className="controls">
+             <label className="ctrl">White ring — {ring}px
+-              <input type="range" min={0} max={48} value={ring} onChange={(e) => { setRing(+e.target.value); setOut(null); }} />
++              <input type="range" min={0} max={48} value={ring} onChange={(e) => setRing(+e.target.value)} />
+             </label>
+           </div>
+ 
+           <div className="preview checker">
+-            <img src={out ?? srcUrl} alt="Preview" style={out ? undefined : { borderRadius: "50%", aspectRatio: "1 / 1", objectFit: "cover", width: "min(320px, 80%)" }} />
++            {out ? (
++              // eslint-disable-next-line @next/next/no-img-element
++              <img src={out} alt="Circular crop preview" style={{ maxWidth: "min(320px, 80%)", maxHeight: 320 }} />
++            ) : (
++              <span className="status"><span className="spinner" />Rendering preview…</span>
++            )}
+           </div>
+ 
+           {error && <div className="error">{error}</div>}
+ 
+           <div className="actions">
+-            {!out ? (
+-              <button className="btn primary" type="button" onClick={run} disabled={busy}>{busy ? "Working…" : "Make circle PNG"}</button>
+-            ) : (
+-              <button className="btn primary" type="button" onClick={download}>Download PNG</button>
+-            )}
++            <button className="btn primary" type="button" onClick={download} disabled={busy || !out}>
++              {busy ? "Working…" : "Download PNG"}
++            </button>
+             <button className="btn" type="button" onClick={reset}>New image</button>
+           </div>
+         </div>
+diff --git a/components/FileConverter.tsx b/components/FileConverter.tsx
+index 19de71f..7e579f0 100644
+--- a/components/FileConverter.tsx
++++ b/components/FileConverter.tsx
+@@ -300,7 +300,7 @@ export default function FileConverter() {
+         <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
+       </div>
+ 
+-      <label className="ctrl" style={{ padding: "0 6px 12px" }}>
++      <label className="ctrl convert-to">
+         <span>Convert to</span>
+         <select
+           className="mono"

@@ -546,11 +546,32 @@ button {
   color: var(--ink);
   font-size: 14px;
   font-weight: 500;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.ctrl select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3e%3cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+.ctrl select:hover {
+  border-color: var(--muted);
+}
+.ctrl select option {
+  color: var(--ink);
+  background: var(--surface);
+  padding: 8px;
 }
 .ctrl select:focus,
 .ctrl input[type="text"]:focus {
   outline: none;
   border-color: var(--accent);
+}
+.convert-to {
+  padding: 0 6px 12px;
 }
 .ctrl input[type="color"] {
   width: 100%;

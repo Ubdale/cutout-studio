@@ -300,7 +300,7 @@ export default function FileConverter() {
         <button type="button" className={`mode-btn${mode === "bulk" ? " on" : ""}`} onClick={() => setMode("bulk")}>Bulk (multiple)</button>
       </div>
 
-      <label className="ctrl" style={{ padding: "0 6px 12px" }}>
+      <label className="ctrl convert-to">
         <span>Convert to</span>
         <select
           className="mono"
